@@ -523,6 +523,29 @@ describe('M5 俯视绘制与放置', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('环形基槽：末点吸附回起点闭合后可确认，生成单个闭合对象', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(0, 0);
+    clickGround(20, 0);
+    clickGround(20, 20);
+    clickGround(0, 20);
+    fireEvent.pointerMove(canvasElement(), groundClient(0.4, 0.3));
+    expect(screen.getByText(/吸附到起点：首尾闭合/)).toBeVisible();
+    clickGround(0.4, 0.3);
+    expect(screen.getByText(/已首尾闭合/)).toBeVisible();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const added = dispatch.mock.results.at(-1)?.value;
+    expect(added.ok).toBe(true);
+    expect(added.value.elements).toHaveLength(1);
+    expect(added.value.elements[0].points).toEqual([
+      { x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 20 }, { x: 0, y: 20 }, { x: 0, y: 0 },
+    ]);
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('三种基坑都能放置，重叠时拒绝并保持工具与既有模型', () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);

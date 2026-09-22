@@ -5,23 +5,30 @@ import { snapPoint } from './pointMath';
 import type { AxisLock } from './pointMath';
 import { trenchOutlines } from './trenchOutline';
 
-export type SnapKind = 'node' | 'centerline' | 'flush-line' | 'boundary-corner' | 'boundary-edge' | 'grid' | 'none';
+export type SnapKind = 'ring-close' | 'node' | 'centerline' | 'flush-line' | 'boundary-corner' | 'boundary-edge' | 'grid' | 'none';
 
 /**
  * 相邻基槽提供的吸附目标：
  * - `node`/`centerline`：中心线节点与线段（端点对接、对齐）；
  * - `flush-line`：槽顶边界向外平移“新槽顶半宽”后的贴合线（边对边贴合）；
- * - `boundary-corner`/`boundary-edge`：槽顶边界角点与边界边。
+ * - `boundary-corner`/`boundary-edge`：槽顶边界角点与边界边；
+ * - `ring-close`：当前草稿自己的起点，用于首尾闭合成环形基槽。
  */
 export type SnapTarget =
   | { shape: 'point'; kind: 'node' | 'boundary-corner'; point: Point2; sourceId: string }
+  | { shape: 'point'; kind: 'ring-close'; point: Point2; sourceId: null }
   | { shape: 'segment'; kind: 'centerline' | 'flush-line' | 'boundary-edge'; from: Point2; to: Point2; sourceId: string };
 
 export type SnapResolution = { point: Point2; kind: SnapKind; sourceId: string | null };
 
-/** 距离并列时的类型优先：节点 > 中心线 > 贴合线 > 边界角点 > 边界边 > 网格。 */
+/** 首尾闭合目标：把草稿起点作为可吸附点，命中后中心线闭合为环形基槽。 */
+export function ringCloseTarget(point: Point2): SnapTarget {
+  return { shape: 'point', kind: 'ring-close', point: { x: point.x, y: point.y }, sourceId: null };
+}
+
+/** 距离并列时的类型优先：闭合 > 节点 > 中心线 > 贴合线 > 边界角点 > 边界边 > 网格。 */
 const KIND_ORDER: Record<SnapKind, number> = {
-  node: 0, centerline: 1, 'flush-line': 2, 'boundary-corner': 3, 'boundary-edge': 4, grid: 5, none: 6,
+  'ring-close': 0, node: 1, centerline: 2, 'flush-line': 3, 'boundary-corner': 4, 'boundary-edge': 5, grid: 6, none: 7,
 };
 
 const LOCK_TOLERANCE = 1e-6;
@@ -70,6 +77,11 @@ const TIE_TOLERANCE = 1e-9;
  * 这样端点对接得到的是共边闭合；否则中心线吸附会让新槽与邻槽内部交叠而被拒绝。
  */
 const POINT_BONUS = 0.8;
+/**
+ * 首尾闭合目标的等效距离优惠（米）：略大于吸附半径，
+ * 使鼠标只要落回起点附近就稳定闭合成环形基槽，而不会被相邻槽的中心线抢走。
+ */
+const CLOSE_BONUS = 1.2;
 
 /**
  * 在半径内取最近目标；距离并列时按类型优先（节点 > 中心线 > 边界角点 > 边界边）。
@@ -91,7 +103,9 @@ export function resolveSnap(raw: Point2, targets: SnapTarget[], options: {
     const distance = Math.hypot(point.x - raw.x, point.y - raw.y);
     if (distance > radius) continue;
     const rank = KIND_ORDER[target.kind];
-    const score = target.shape === 'point' ? distance - POINT_BONUS : distance;
+    const score = target.shape === 'point'
+      ? distance - (target.kind === 'ring-close' ? CLOSE_BONUS : POINT_BONUS)
+      : distance;
     if (score < bestScore - TIE_TOLERANCE || (Math.abs(score - bestScore) <= TIE_TOLERANCE && rank < bestRank)) {
       best = { point: { x: point.x, y: point.y }, kind: target.kind, sourceId: target.sourceId };
       bestRank = rank; bestScore = score;
@@ -107,6 +121,7 @@ export function resolveSnap(raw: Point2, targets: SnapTarget[], options: {
 export function snapLabel(resolution: SnapResolution): string {
   const source = resolution.sourceId ?? '';
   switch (resolution.kind) {
+    case 'ring-close': return '吸附到起点：首尾闭合，确认后生成环形基槽';
     case 'node': return `吸附到 ${source} 端点`;
     case 'centerline': return `吸附到 ${source} 中心线`;
     case 'flush-line': return `吸附到 ${source} 贴合线（边对边）`;

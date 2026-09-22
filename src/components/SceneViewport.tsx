@@ -9,7 +9,8 @@ import type { DrawingState, ToolKind } from '../scene/DrawingManager';
 import { groundPointFromPointer } from '../scene/groundPointer';
 import { applyLock, isDragGesture, nextPoint, orthoLock, snapPoint } from '../core/geometry/pointMath';
 import { outline } from '../core/geometry/pitOutline';
-import { resolveSnap, snapLabel, trenchSnapTargets } from '../core/geometry/snapTargets';
+import { resolveSnap, ringCloseTarget, snapLabel, trenchSnapTargets } from '../core/geometry/snapTargets';
+import { MIN_RING_NODES } from '../core/geometry/trenchOutline';
 import type { SnapResolution, SnapTarget } from '../core/geometry/snapTargets';
 import { ProjectStore } from '../store/ProjectStore';
 import type { Command } from '../store/ProjectStore';
@@ -108,7 +109,9 @@ export function SceneViewport(): ReactElement {
     const last = state.nodes[state.nodes.length - 1];
     const lock = ortho && last ? orthoLock(last, ground) : null;
     const raw = lock ? applyLock(lock, ground) : ground;
-    return resolveSnap(raw, snapTargets.current, { grid: snap, spacing, lock });
+    // 草稿自身的起点也参与吸附：鼠标回到起点即可首尾闭合成环形基槽。
+    const closure = state.nodes.length >= MIN_RING_NODES ? [ringCloseTarget(state.nodes[0]!)] : [];
+    return resolveSnap(raw, [...closure, ...snapTargets.current], { grid: snap, spacing, lock });
   }
 
   /** 预览只显示未提交草稿：基槽为中心线，基坑为槽顶轮廓。 */

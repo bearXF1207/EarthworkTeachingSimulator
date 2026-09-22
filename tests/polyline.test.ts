@@ -185,9 +185,11 @@ describe('M4 折线校验', () => {
       expect(crossed.issues[0]?.path).toBe('elements[0].points[2]');
       expect(crossed.issues[0]?.message).toContain('相交');
     }
-    for (const points of [nodes([0, 0], [10, 0], [20, 0], [10, 0]), nodes([0, 0], [10, 0], [10, 10], [0, 0])]) {
+    for (const points of [nodes([0, 0], [10, 0], [20, 0], [10, 0])]) {
       expect(validateTrench(input(points), 't1', 'elements[0]').ok).toBe(false);
     }
+    // 首尾闭合的三节点回路不再是折线，按环形基槽接受（见 closure.test.ts）
+    expect(validateTrench(input(nodes([0, 0], [10, 0], [10, 10], [0, 0])), 't1', 'elements[0]').ok).toBe(true);
   });
   it('160° 转向超出 miter 上限被拒绝并指明节点', () => {
     const result = validateTrench(input(nodes([0, 0], [10, 0], [0.6030737921, 3.4202014333])), 't1', 'elements[0]');

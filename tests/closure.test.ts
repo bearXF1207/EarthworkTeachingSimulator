@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { Raycaster, Vector3 } from 'three';
+import { Raycaster, ShapeUtils, Vector2, Vector3 } from 'three';
 import { nextPoint } from '../src/core/geometry/pointMath';
-import { resolveSnap, trenchSnapTargets } from '../src/core/geometry/snapTargets';
-import { trenchOutlines } from '../src/core/geometry/trenchOutline';
+import { resolveSnap, ringCloseTarget, trenchSnapTargets } from '../src/core/geometry/snapTargets';
+import { buildTrench } from '../src/core/geometry/trench';
+import { isClosedRing, trenchOutlines } from '../src/core/geometry/trenchOutline';
 import { emptyProject } from '../src/core/model/project';
 import type { ExcavationElement, Point2, Trench } from '../src/core/model/project';
 import { openingsConflict, validateProject } from '../src/core/validation/project';
@@ -164,5 +165,128 @@ describe('M5 闭合连接', () => {
     expect(openingsConflict(first, shifted)).toBe(true);
     const beside = trench('trench-4', [p(0, 4), p(20, 4)]); // 平移 4m：只共边
     expect(openingsConflict(first, beside)).toBe(false);
+  });
+});
+
+describe('M5 环形基槽（中心线首尾闭合）', () => {
+  /** 20m 见方、B=2、H=2、m=0.5：顶半宽 2、底半宽 1，外圈 24²、内圈 18²。 */
+  const ring = (points: Point2[]): Trench => trench('ring-1', points);
+  const square = (): Trench => ring([p(0, 0), p(20, 0), p(20, 20), p(0, 20), p(0, 0)]);
+
+  it('末点回到首点即判定闭合，闭合点写入规范坐标', () => {
+    expect(isClosedRing(square().points)).toBe(true);
+    expect(isClosedRing([p(0, 0), p(20, 0), p(0, 1e-12)])).toBe(false); // 与首段重合的普通折线
+    expect(isClosedRing([p(0, 0), p(20, 0), p(20, 20)])).toBe(false);
+  });
+
+  it('轮廓：外圈为开口、内圈为岛，90° 转角按 miter 生成', () => {
+    const outlines = trenchOutlines(square());
+    // 顶半宽 2：外圈向外 2、岛边界向内 2；底半宽 1：外圈向外 1、岛边界向内 1。
+    expect(outlines.topOutline).toEqual([p(-2, -2), p(22, -2), p(22, 22), p(-2, 22)]);
+    expect(outlines.topHole).toEqual([p(2, 2), p(18, 2), p(18, 18), p(2, 18)]);
+    expect(outlines.bottomOutline).toEqual([p(-1, -1), p(21, -1), p(21, 21), p(-1, 21)]);
+    expect(outlines.bottomHole).toEqual([p(1, 1), p(19, 1), p(19, 19), p(1, 19)]);
+  });
+
+  it('环形实体：底面为环形面，外圈与内圈各一圈侧面，体积等于环形面积×深度', () => {
+    const built = buildTrench(square());
+    expect(built.topHole).toBeDefined();
+    const position = built.geometry.getAttribute('position');
+    const at = (i: number): Vector3 => new Vector3(position.getX(i), position.getY(i), position.getZ(i));
+    const term = (a: Vector3, b: Vector3, c: Vector3): number =>
+      a.x * (b.y * c.z - b.z * c.y) - a.y * (b.x * c.z - b.z * c.x) + a.z * (b.x * c.y - b.y * c.x);
+    let sum = 0;
+    for (let i = 0; i < position.count; i += 3) sum += term(at(i), at(i + 1), at(i + 2)) / 6;
+    // 补虚拟顶面（外圈减内圈、法向朝下）使曲面闭合，再作有向体积积分
+    const combined = [...built.topOutline, ...built.topHole!];
+    for (const triangle of ShapeUtils.triangulateShape(
+      built.topOutline.map(v => new Vector2(v.x, v.y)), [built.topHole!.map(v => new Vector2(v.x, v.y))])) {
+      const [a, b, c] = triangle.map(index => combined[index]!) as [Point2, Point2, Point2];
+      sum += term(new Vector3(a.x, a.y, 0), new Vector3(c.x, c.y, 0), new Vector3(b.x, b.y, 0)) / 6;
+    }
+    // 底截面 22²−18² = 160、顶截面 24²−16² = 320，深度 2，棱台体积 = (160+320)/2×2 = 480
+    expect(Math.abs(sum)).toBeCloseTo(480, 6);
+    // 侧面朝向直接检查（组 1 为侧面，跳过底面）：
+    // 外圈南侧墙面在 y < 0 一侧、法向朝槽内（+y）；内圈南侧墙面在 y > 0 一侧、法向背向岛（−y）。
+    const wallNormals = (side: (v: Vector3) => boolean): Vector3[] => {
+      const found: Vector3[] = [];
+      const a = new Vector3(), b = new Vector3(), c = new Vector3();
+      const wallStart = built.geometry.groups[0]?.count ?? 0;
+      for (let i = wallStart; i < position.count; i += 3) {
+        a.fromBufferAttribute(position, i); b.fromBufferAttribute(position, i + 1); c.fromBufferAttribute(position, i + 2);
+        if (![a, b, c].every(side)) continue;
+        found.push(new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a)).normalize());
+      }
+      return found;
+    };
+    // 只取南侧一带（|y| 在 0.5～2.5 之间），避免混入岛的其它三面墙
+    const outerWall = wallNormals(v => v.y < -0.5 && v.y > -2.5);
+    expect(outerWall.length).toBeGreaterThan(0);
+    expect(outerWall.every(normal => normal.y > 0.5)).toBe(true);
+    const innerWall = wallNormals(v => v.y > 0.5 && v.y < 2.5);
+    expect(innerWall.length).toBeGreaterThan(0);
+    expect(innerWall.every(normal => normal.y < -0.5)).toBe(true);
+  });
+
+  it('校验：节点过少、中心线自交与过窄环被拒绝，正常环接受', () => {
+    // 只有 3 个点且末点复首点：不构成环形，仍按折线的重复节点拒绝
+    const tooFew = validateProject(projectWith(ring([p(0, 0), p(10, 0), p(0, 0)])));
+    expect(tooFew.ok).toBe(false);
+    if (!tooFew.ok) expect(tooFew.issues[0]?.message).toContain('重复节点');
+    // 中心线自交的回环（八字形）
+    const crossed = validateProject(projectWith(ring([p(0, 0), p(20, 0), p(0, 20), p(20, 20), p(0, 0)])));
+    expect(crossed.ok).toBe(false);
+    // 过窄的环：内圈在短边方向翻折，偏移轮廓无效
+    const narrow = validateProject(projectWith(ring([p(0, 0), p(10, 0), p(10, 0.2), p(0, 0.2), p(0, 0)])));
+    expect(narrow.ok).toBe(false);
+    if (!narrow.ok) expect(narrow.issues[0]?.message).toContain('内圈');
+    const ok = validateProject(projectWith(square()));
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      const element = ok.value.elements[0]!;
+      expect(element.type).toBe('trench');
+      if (element.type === 'trench') expect(element.points).toHaveLength(5);
+    }
+  });
+
+  it('地面：外圈开孔、内圈补回地面岛，槽内无地面', () => {
+    const outlines = trenchOutlines(square());
+    const ground = new GroundManager([outlines.topOutline], 100, [outlines.topHole!]);
+    try {
+      expectArea(groundArea(ground), 10000 - area(outlines.topOutline));
+      const patches = ground.root.children.filter(child => child.name === 'ground-island');
+      expect(patches).toHaveLength(1);
+      // 岛上仍是地面：射线只对主地面与补片求交，避免命中坐标轴辅助线
+      ground.root.updateMatrixWorld(true);
+      const hit = (x: number, y: number): number =>
+        new Raycaster(new Vector3(x, y, 10), new Vector3(0, 0, -1)).intersectObjects([ground.ground, ...patches], false).length;
+      // 取非整数且避开三角化对角线的点，避免落在共享边上被重复命中
+      expect(hit(10.4, 14.6)).toBe(1); // 岛上是补片
+      expect(hit(30.4, 10.6)).toBe(1); // 场地仍是主地面
+      expect(hit(0.4, 10.6)).toBe(0); // 环形槽内没有地面
+      expect(hit(21.4, 10.6)).toBe(0);
+    } finally { ground.dispose(); }
+  });
+
+  it('开口冲突：平行贴边可接受，岛内放置基坑被拒绝', () => {
+    // 环形外圈槽顶为 x∈[-2,22]、y∈[-2,22]；这一条的槽顶 x∈[22,26]、y∈[-2,22]，只共边。
+    const beside = trench('trench-2', [p(24, 0), p(24, 20)]);
+    expect(openingsConflict(square(), beside)).toBe(false);
+    expect(validateProject(projectWith(square(), beside)).ok).toBe(true);
+    // 环形基槽的内岛按“外圈占用”参与判定，岛内不允许放置其他开挖对象。
+    const inside = trench('trench-3', [p(10, 8), p(10, 12)]);
+    expect(openingsConflict(square(), inside)).toBe(true);
+    const result = validateProject(projectWith(square(), inside));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues[0]?.message).toContain('内部交叠');
+  });
+
+  it('吸附：草稿起点参与吸附，靠近起点时优先闭合', () => {
+    const targets = [...trenchSnapTargets([]), ringCloseTarget(p(0, 0))];
+    const near = resolveSnap(p(0.4, 0.3), targets);
+    expect(near.kind).toBe('ring-close');
+    expect(near.point).toEqual(p(0, 0));
+    const far = resolveSnap(p(3, 3), targets);
+    expect(far.kind).toBe('grid');
   });
 });

@@ -9,8 +9,9 @@ export class GroundManager {
   readonly ground: Mesh<BufferGeometry, MeshStandardMaterial>;
   readonly grid: LineSegments<BufferGeometry, LineBasicMaterial>;
   readonly axes: AxesHelper;
+  private readonly islands: Mesh<BufferGeometry, MeshStandardMaterial>[] = [];
   private disposed = false;
-  constructor(holes: Point2[][] = [], size = 100) {
+  constructor(holes: Point2[][] = [], size = 100, islandRings: Point2[][] = []) {
     let minX = -size / 2, maxX = size / 2, minY = -size / 2, maxY = size / 2;
     for (const ring of holes) for (const p of ring) {
       minX = Math.min(minX, Math.floor(p.x - 10)); maxX = Math.max(maxX, Math.ceil(p.x + 10));
@@ -69,16 +70,43 @@ export class GroundManager {
     this.axes = new AxesHelper(12);
     this.root.name = 'ground'; this.grid.position.z = .015; this.axes.position.z = .03;
     this.root.add(this.ground, this.grid, this.axes);
+    // 环形基槽的岛：外圈被切成孔洞，岛上原地面用一块共面补片补回（网格线不跨越岛，属于已知简化）。
+    for (const ring of islandRings) {
+      const patch = this.buildIsland(ring);
+      if (!patch) continue;
+      this.islands.push(patch);
+      this.root.add(patch);
+    }
+  }
+  /** 岛的三角化：与主地面共面、同一材质参数，独立材质便于释放。 */
+  private buildIsland(ring: Point2[]): Mesh<BufferGeometry, MeshStandardMaterial> | null {
+    const shape = ring.map(p => new Vector2(p.x, p.y));
+    const triangles = ShapeUtils.triangulateShape(shape, []);
+    const positions: number[] = [];
+    for (const triangle of triangles) {
+      const vertices = triangle.map(index => shape[index]!);
+      const area = Math.abs(ShapeUtils.area(vertices));
+      if (!Number.isFinite(area) || area <= DEGENERATE_GROUND_AREA) continue;
+      for (const p of vertices) positions.push(p.x, p.y, 0);
+    }
+    if (!positions.length) return null;
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
+    geometry.computeVertexNormals();
+    const patch = new Mesh(geometry, new MeshStandardMaterial({ color: 0x7d8060, roughness: 1, side: DoubleSide }));
+    patch.name = 'ground-island';
+    return patch;
   }
   setGridVisible(visible: boolean): void { this.grid.visible = visible; }
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    for (const object of [this.ground, this.grid, this.axes]) {
+    for (const object of [this.ground, this.grid, this.axes, ...this.islands]) {
       object.geometry.dispose();
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       for (const material of materials) material.dispose();
     }
+    this.islands.length = 0;
     this.root.clear(); this.root.removeFromParent();
   }
 }

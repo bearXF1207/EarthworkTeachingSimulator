@@ -48,6 +48,43 @@ export function rawOffsetRing(points: Point2[], joins: Join[], halfWidth: number
 export const offsetRingNode = (index: number, nodeCount: number): number =>
   index < nodeCount ? index : 2 * nodeCount - 1 - index;
 
+/** 环形中心线的段：末段由末点回到首点，数量与不重复节点数相同。 */
+export function ringSegments(nodes: Point2[]): Segment[] {
+  const segments: Segment[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i]!, b = nodes[(i + 1) % nodes.length]!;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (!Number.isFinite(length) || length <= EPSILON) {
+      throw new GeometryError(`环形中心线第 ${i + 1} 段过短，无法计算方向`, i, i);
+    }
+    const d = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
+    segments.push({ d, n: leftNormal(d), length });
+  }
+  return segments;
+}
+
+/** 环形中心线每个节点都是前后两段的 miter 交点，没有端面。 */
+export function ringJoins(nodes: Point2[], segments: Segment[]): Join[] {
+  return nodes.map((_, k) => {
+    const previous = segments[(k - 1 + segments.length) % segments.length]!;
+    return solveJoin(previous, segments[k]!, k);
+  });
+}
+
+/** 环形中心线的单侧偏移：外圈与内圈各是一个独立闭合环，不再首尾拼接。 */
+export function rawRingSide(nodes: Point2[], joins: Join[], halfWidth: number, sign: number): Point2[] {
+  return nodes.map((p, k) => {
+    const { j, denom } = joins[k]!;
+    const scale = sign * halfWidth / denom;
+    return { x: p.x + j.x * scale, y: p.y + j.y * scale };
+  });
+}
+
+/** 统一成逆时针绕序（返回新数组，不修改入参）。 */
+export function toCounterClockwise(ring: Point2[]): Point2[] {
+  return signedArea(ring) < 0 ? [...ring].reverse() : [...ring];
+}
+
 /** 底/顶轮廓共用一次绕序决策，统一成逆时针并保持节点一一对应。 */
 export function orientRings(bottom: Point2[], top: Point2[]): [Point2[], Point2[]] {
   const bottomArea = signedArea(bottom), topArea = signedArea(top);

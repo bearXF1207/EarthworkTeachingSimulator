@@ -100,6 +100,21 @@ export function segmentsTouch(a: Point2, b: Point2, c: Point2, d: Point2): boole
 }
 
 /** 有向面积；逆时针为正。 */
+/**
+ * 两个闭合环的边是否存在量级可观的真交叉（用于环形基槽的内外圈互检）。
+ * 共边、相切与顶点接触不算交叉，只有真正穿过对方才算。
+ */
+export function edgesProperlyCross(ring: Point2[], other: Point2[]): boolean {
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
+    for (let k = 0; k < other.length; k++) {
+      const c = other[k]!, d = other[(k + 1) % other.length]!;
+      if (properCrossing(a, b, c, d)) return true;
+    }
+  }
+  return false;
+}
+
 export function signedArea(ring: Point2[]): number {
   let sum = 0;
   for (let i = 0; i < ring.length; i++) {

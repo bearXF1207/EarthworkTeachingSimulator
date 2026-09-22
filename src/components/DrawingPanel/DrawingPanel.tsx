@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ReactElement } from 'react';
 import { polylineReport } from '../../core/geometry/pointMath';
+import { isClosedRing } from '../../core/geometry/trenchOutline';
 import type { PitDraftParams, TrenchSection } from '../../core/model/project';
 import { PIT_LABELS } from '../../core/model/project';
 import type { DrawingState, ToolKind } from '../../scene/DrawingManager';
@@ -45,6 +46,8 @@ type Props = {
 /** M5 绘制面板：工具切换、草稿读数与精确输入、基坑放置参数、正交模式与吸附提示。草稿不进入项目数据。 */
 export function DrawingPanel({ state, ready, message, hint, section, pit, ortho, onTool, onSection, onPit, onOrtho, onAdvance, onFinish, onCancel }: Props): ReactElement {
   const nodes = state.kind === 'drawTrench' ? state.nodes : [];
+  // 末点回到首点即为首尾闭合：确认后按环形基槽生成，内圈包围的岛保持地面。
+  const closed = isClosedRing(nodes);
   const segments = polylineReport(nodes);
   const cursor = state.kind === 'drawTrench' ? state.cursor : null;
   const last = nodes[nodes.length - 1];
@@ -69,9 +72,12 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
     </div>
     {message && <p role="alert" className="input-error">{message}</p>}
     {state.kind === 'drawTrench' && <div className="draw-draft">
-      <p className="scope-note">已设置 {nodes.length} 个节点：在俯视场地单击添加。确认方式：双击终点、Enter（输入框内用 Ctrl/Cmd+Enter）或“完成基槽”按钮；Esc 取消。绘制期间锁定视角。</p>
+      <p className="scope-note">已设置 {nodes.length} 个节点{closed ? '（含闭合点）' : ''}：在俯视场地单击添加。确认方式：双击终点、Enter（输入框内用 Ctrl/Cmd+Enter）或“完成基槽”按钮；Esc 取消。绘制期间锁定视角。</p>
+      {closed
+        ? <p className="scope-note">已首尾闭合：确认后生成<strong>环形基槽</strong>，外圈是开挖开口、内圈包围的岛保持地面。</p>
+        : <p className="scope-note">把最后一个节点吸附回起点（提示“首尾闭合”）即可围合成环形基槽。</p>}
       <label><input type="checkbox" checked={ortho} onChange={event => onOrtho(event.target.checked)} />正交模式（仅水平/竖直）</label>
-      <p className="scope-note">中心线会吸附到相邻基槽的端点、中心线与槽顶边界，可用端点对接、共边贴合或围合成封闭区域；基槽之间只允许边界接触。正交模式只约束鼠标绘制，长度/角度输入仍按输入值。</p>
+      <p className="scope-note">中心线会吸附到相邻基槽的端点、中心线与槽顶边界，也可以吸附回自身起点闭合；基槽之间只允许边界接触。正交模式只约束鼠标绘制，长度/角度输入仍按输入值。</p>
       {segments.map((segment, index) =>
         <p key={index}>第 {index + 1} 段：{format(segment.length, 2)}m · 方位角 {format(segment.angle, 1)}°</p>)}
       {last && <p>当前点：({format(last.x, 2)}, {format(last.y, 2)})</p>}

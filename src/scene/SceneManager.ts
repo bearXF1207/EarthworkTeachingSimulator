@@ -88,7 +88,7 @@ export class SceneManager {
     if (this.disposed) throw new Error('Scene disposed');
     const excavation = new ExcavationMeshes(project.elements, this.displayMode === 'wireframe');
     let ground: GroundManager;
-    try { ground = new GroundManager(excavation.holes, project.settings.groundSize); }
+    try { ground = new GroundManager(excavation.holes, project.settings.groundSize, excavation.islands); }
     catch (error) { excavation.dispose(); throw error; }
     ground.setGridVisible(project.settings.gridVisible);
     let finished = false;
