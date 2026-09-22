@@ -1,18 +1,67 @@
-import { AxesHelper, DoubleSide, GridHelper, Group, Mesh, MeshStandardMaterial, PlaneGeometry } from 'three';
+import { AxesHelper, BufferGeometry, DoubleSide, Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Mesh, MeshStandardMaterial, ShapeUtils, Vector2 } from 'three';
+import type { Point2 } from '../core/model/project';
 
 export class GroundManager {
   readonly root = new Group();
-  readonly ground = new Mesh(new PlaneGeometry(100, 100), new MeshStandardMaterial({
-    color: 0x7d8060, roughness: 1, side: DoubleSide,
-  }));
-  readonly grid = new GridHelper(100, 100, 0x414d3f, 0x667157);
-  readonly axes = new AxesHelper(12);
+  readonly ground: Mesh<BufferGeometry, MeshStandardMaterial>;
+  readonly grid: LineSegments<BufferGeometry, LineBasicMaterial>;
+  readonly axes: AxesHelper;
   private disposed = false;
-  constructor() {
-    this.root.name = 'ground';
-    this.grid.rotation.x = Math.PI / 2;
-    this.grid.position.z = 0.015;
-    this.axes.position.z = 0.03;
+  constructor(holes: Point2[][] = [], size = 100) {
+    let minX = -size / 2, maxX = size / 2, minY = -size / 2, maxY = size / 2;
+    for (const ring of holes) for (const p of ring) {
+      minX = Math.min(minX, Math.floor(p.x - 10)); maxX = Math.max(maxX, Math.ceil(p.x + 10));
+      minY = Math.min(minY, Math.floor(p.y - 10)); maxY = Math.max(maxY, Math.ceil(p.y + 10));
+    }
+    const outer = [new Vector2(minX, minY), new Vector2(minX, maxY), new Vector2(maxX, maxY), new Vector2(maxX, minY)];
+    const rings = holes.map(ring => ring.map(p => new Vector2(p.x, p.y)));
+    const triangles = ShapeUtils.triangulateShape(outer, rings);
+    const points = [...outer, ...rings.flat()];
+    const expectedArea = (maxX - minX) * (maxY - minY) - rings.reduce((sum, ring) => sum + Math.abs(ShapeUtils.area(ring)), 0);
+    let actualArea = 0;
+    const positions: number[] = [];
+    for (const triangle of triangles) {
+      const vertices = triangle.map(index => points[index]!);
+      const area = Math.abs(ShapeUtils.area(vertices));
+      if (!Number.isFinite(area) || area <= 0) throw new Error('Invalid ground triangle');
+      actualArea += area;
+      for (const p of vertices) positions.push(p.x, p.y, 0);
+    }
+    if (Math.abs(actualArea - expectedArea) > Math.max(1e-6, expectedArea * 1e-10)) throw new Error('Incomplete ground triangulation');
+    const geometry = new BufferGeometry();
+    geometry.setAttribute('position', new Float32BufferAttribute(positions, 3)); geometry.computeVertexNormals();
+    this.ground = new Mesh(geometry, new MeshStandardMaterial({ color: 0x7d8060, roughness: 1, side: DoubleSide }));
+    const lines: number[] = [];
+    // Subtract convex-hole intervals from each integer grid line.
+    const clip = (fixed: number, vertical: boolean, low: number, high: number): void => {
+      const intervals: [number, number][] = [];
+      for (const ring of holes) {
+        const hits: number[] = [];
+        for (let i = 0; i < ring.length; i++) {
+          const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
+          const af = vertical ? a.x : a.y, bf = vertical ? b.x : b.y;
+          const av = vertical ? a.y : a.x, bv = vertical ? b.y : b.x;
+          if (af === bf) { if (Math.abs(fixed - af) < 1e-7) hits.push(av, bv); }
+          else if (fixed >= Math.min(af, bf) && fixed <= Math.max(af, bf)) hits.push(av + (fixed - af) / (bf - af) * (bv - av));
+        }
+        if (hits.length) intervals.push([Math.min(...hits), Math.max(...hits)]);
+      }
+      intervals.sort((a, b) => a[0] - b[0]);
+      const segment = (a: number, b: number): void => {
+        if (b - a < 1e-7) return;
+        if (vertical) lines.push(fixed, a, 0, fixed, b, 0);
+        else lines.push(a, fixed, 0, b, fixed, 0);
+      };
+      let cursor = low;
+      for (const [start, end] of intervals) { segment(cursor, start); cursor = Math.max(cursor, end); }
+      segment(cursor, high);
+    };
+    for (let x = Math.ceil(minX); x <= maxX; x++) clip(x, true, minY, maxY);
+    for (let y = Math.ceil(minY); y <= maxY; y++) clip(y, false, minX, maxX);
+    const gridGeometry = new BufferGeometry(); gridGeometry.setAttribute('position', new Float32BufferAttribute(lines, 3));
+    this.grid = new LineSegments(gridGeometry, new LineBasicMaterial({ color: 0x52634e }));
+    this.axes = new AxesHelper(12);
+    this.root.name = 'ground'; this.grid.position.z = .015; this.axes.position.z = .03;
     this.root.add(this.ground, this.grid, this.axes);
   }
   setGridVisible(visible: boolean): void { this.grid.visible = visible; }
@@ -24,7 +73,6 @@ export class GroundManager {
       const materials = Array.isArray(object.material) ? object.material : [object.material];
       for (const material of materials) material.dispose();
     }
-    this.root.clear();
-    this.root.removeFromParent();
+    this.root.clear(); this.root.removeFromParent();
   }
 }

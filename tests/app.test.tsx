@@ -6,6 +6,9 @@ import { FakeRenderer, FakeResizeObserver } from './scene-test-kit';
 import { SceneManager } from '../src/scene/SceneManager';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type * as Three from 'three';
+import { BufferGeometry, Material, ShapeUtils } from 'three';
+import { GroundManager } from '../src/scene/GroundManager';
+import { ProjectStore } from '../src/store/ProjectStore';
 
 vi.mock('three', async (importOriginal) => {
   const actual = await importOriginal<typeof Three>();
@@ -21,6 +24,64 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
+  it('M2 实际三角化失败保留旧场景与数据，候选坑资源被释放', () => {
+    const host = document.createElement('div'); document.body.append(host);
+    const scene = new SceneManager(host, () => undefined), store = new ProjectStore();
+    const element = { id: 'a', type: 'square-pit' as const, position: { x: 0, y: 0 }, bottomSize: 4, depth: 2, slope: .5, rotation: 0 };
+    const prepare = (project: ReturnType<ProjectStore['getSnapshot']>) => scene.prepareProject(project);
+    store.dispatch({ type: 'add', element }, prepare);
+    const before = store.getSnapshot(), groundDispose = vi.spyOn(GroundManager.prototype, 'dispose');
+    const geometryDispose = vi.spyOn(BufferGeometry.prototype, 'dispose');
+    const triangulate = vi.spyOn(ShapeUtils, 'triangulateShape').mockReturnValue([]);
+    try {
+      expect(store.dispatch({ type: 'update', element: { ...element, depth: 3 } }, prepare).ok).toBe(false);
+      expect(store.getSnapshot()).toEqual(before); expect(groundDispose).not.toHaveBeenCalled();
+      expect(geometryDispose).toHaveBeenCalledTimes(1); // Only the rejected candidate pit.
+      expect(FakeRenderer.active.size).toBe(1);
+    } finally { triangulate.mockRestore(); scene.dispose(); host.remove(); }
+  });
+  it('M2 创建三类型、合法编辑、非法草稿保留模型、重载保留项目并可删除', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    for (const label of ['方形基坑', '矩形基坑', '圆形基坑']) fireEvent.click(screen.getByRole('button', { name: `添加${label}` }));
+    expect(screen.getByRole('combobox', { name: '显示模式' })).toBeEnabled();
+    expect(screen.queryByRole('textbox', { name: '旋转角（°）' })).not.toBeInTheDocument();
+    const depth = screen.getByRole('textbox', { name: '开挖深度（m）' });
+    fireEvent.change(depth, { target: { value: '3' } });
+    const last = dispatch.mock.results.at(-1)?.value;
+    expect(last.ok).toBe(true); expect(last.value.elements[2].depth).toBe(3);
+    fireEvent.change(depth, { target: { value: '' } }); expect(depth).toHaveValue('');
+    expect(dispatch.mock.results.at(-1)?.value).toBe(last);
+    fireEvent.change(depth, { target: { value: '0' } }); expect(dispatch.mock.results.at(-1)?.value.ok).toBe(false);
+    fireEvent.change(screen.getByRole('combobox', { name: '当前对象' }), { target: { value: 'pit-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: '当前对象' }), { target: { value: 'pit-3' } });
+    expect(screen.getByRole('textbox', { name: '开挖深度（m）' })).toHaveValue('3');
+    fireEvent.click(screen.getByRole('button', { name: '重新加载场景' }));
+    expect(screen.getByRole('textbox', { name: '开挖深度（m）' })).toHaveValue('3');
+    fireEvent.click(screen.getByRole('button', { name: '删除当前基坑' }));
+    expect(dispatch.mock.results.at(-1)?.value.value.elements).toHaveLength(2);
+    expect(FakeRenderer.active.size).toBe(1);
+  });
+
+  it('M2 连续100次几何替换保持恒定资源，取消预构建与卸载全部释放', () => {
+    const geometryDispose = vi.spyOn(BufferGeometry.prototype, 'dispose');
+    const materialDispose = vi.spyOn(Material.prototype, 'dispose');
+    const host = document.createElement('div'); document.body.append(host);
+    const scene = new SceneManager(host, () => undefined), store = new ProjectStore();
+    const element = { id: 'a', type: 'square-pit' as const, position: { x: 0, y: 0 }, bottomSize: 4, depth: 2, slope: .5, rotation: 0 };
+    const prepare = (project: ReturnType<ProjectStore['getSnapshot']>) => scene.prepareProject(project);
+    store.dispatch({ type: 'add', element }, prepare);
+    const initialGeometry = geometryDispose.mock.calls.length, initialMaterial = materialDispose.mock.calls.length;
+    for (let i = 0; i < 100; i++) expect(store.dispatch({ type: 'update', element: { ...element, rotation: i } }, prepare).ok).toBe(true);
+    // Per replacement: ground, grid, axes, pit (4 geometries; 5 materials).
+    expect(geometryDispose.mock.calls.length - initialGeometry).toBe(400);
+    expect(materialDispose.mock.calls.length - initialMaterial).toBe(500);
+    const prepared = scene.prepareProject(store.getSnapshot()); prepared.dispose(); prepared.dispose();
+    expect(geometryDispose.mock.calls.length - initialGeometry).toBe(404);
+    scene.dispose(); host.remove();
+    expect(geometryDispose.mock.calls.length - initialGeometry).toBe(408);
+    expect(materialDispose.mock.calls.length - initialMaterial).toBe(510);
+  });
   it('StrictMode不产生双canvas/双循环，支持四视角、网格与重置', () => {
     const setView = vi.spyOn(SceneManager.prototype, 'setView');
     const grid = vi.spyOn(SceneManager.prototype, 'setGridVisible');

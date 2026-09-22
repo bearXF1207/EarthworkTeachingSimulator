@@ -3,6 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CameraManager } from './CameraManager';
 import type { ViewMode } from './CameraManager';
 import { GroundManager } from './GroundManager';
+import { PitMeshes } from './MeshFactory';
+import type { Pit, Project } from '../core/model/project';
+import type { Prepared } from '../store/ProjectStore';
 
 export type DisplayMode = 'solid' | 'wireframe';
 export type SceneStatus = { ready: boolean; message: string };
@@ -14,6 +17,7 @@ export class SceneManager {
   private readonly scene = new Scene();
   private readonly renderer: RendererPort;
   private ground: GroundManager | null = null;
+  private pits: PitMeshes | null = null;
   private controls: OrbitControls | null = null;
   private observer: ResizeObserver | null = null;
   private disposed = false;
@@ -69,9 +73,27 @@ export class SceneManager {
   }
 
   setGridVisible(visible: boolean): void { this.ground?.setGridVisible(visible); }
-  // M1 has no excavations; M2's MeshFactory will consume this setting.
-  setDisplayMode(mode: DisplayMode): void { this.displayMode = mode; }
+  setDisplayMode(mode: DisplayMode): void { this.displayMode = mode; this.pits?.setWireframe(mode === 'wireframe'); }
   getDisplayMode(): DisplayMode { return this.displayMode; }
+
+  prepareProject(project: Project): Prepared {
+    if (this.disposed) throw new Error('Scene disposed');
+    const pits = new PitMeshes(project.elements as Pit[], this.displayMode === 'wireframe');
+    let ground: GroundManager;
+    try { ground = new GroundManager(pits.holes, project.settings.groundSize); }
+    catch (error) { pits.dispose(); throw error; }
+    ground.setGridVisible(project.settings.gridVisible);
+    let finished = false;
+    return {
+      commit: () => {
+        if (finished || this.disposed) throw new Error('Invalid prepared scene');
+        this.scene.add(ground.root, pits.root);
+        this.ground?.dispose(); this.pits?.dispose();
+        this.ground = ground; this.pits = pits; finished = true;
+      },
+      dispose: () => { if (!finished) { ground.dispose(); pits.dispose(); finished = true; } },
+    };
+  }
 
   private installControls(): void {
     const controls = new OrbitControls(this.cameras.active, this.renderer.domElement);
@@ -125,6 +147,7 @@ export class SceneManager {
     this.observer?.disconnect();
     this.controls?.dispose();
     this.ground?.dispose();
+    this.pits?.dispose();
     this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost);
     this.renderer.domElement.removeEventListener('webglcontextrestored', this.onContextRestored);
     this.scene.clear();
