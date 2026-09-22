@@ -1,6 +1,13 @@
 import { vi } from 'vitest';
 import type { RendererPort } from '../src/scene/SceneManager';
 
+// jsdom 的 canvas 没有指针捕获接口，OrbitControls 在 pointerdown 时会调用，补桩避免干扰测试。
+Object.assign(HTMLCanvasElement.prototype, {
+  setPointerCapture: (): void => undefined,
+  releasePointerCapture: (): void => undefined,
+  hasPointerCapture: (): boolean => false,
+});
+
 export class FakeRenderer implements RendererPort {
   static instances: FakeRenderer[] = [];
   static active = new Set<FakeRenderer>();

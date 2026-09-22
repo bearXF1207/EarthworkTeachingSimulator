@@ -10,6 +10,10 @@ import type { Opening } from '../core/validation/project';
 /** 端面贴到相邻开口边界上的判定容差（米）。 */
 const ABUT_TOLERANCE = 1e-6;
 
+/** 实体常态与选中高亮颜色：[槽底/坑底, 侧面]。 */
+const BASE_COLORS = [0xb8a77c, 0x936c43];
+const HIGHLIGHT_COLORS = [0xe2cd98, 0xb3833f];
+
 /**
  * 判定基槽两端是否与相邻开挖贯通（收边或端点对接得到的共边连接）。
  * 贯通的端部省略端面，接口处不会留一堵墙，视觉上真正打通。
@@ -100,6 +104,15 @@ export class ExcavationMeshes {
   private applySelection(): void {
     for (const [id, line] of this.centerlines) {
       line.material.color.set(id === this.selectedId ? SELECTED_CENTERLINE_COLOR : CENTERLINE_COLOR);
+    }
+    // 选中的开挖实体同步换色：只在材质基色之间切换，不影响线框与其他属性。
+    for (const child of this.root.children) {
+      if (!(child instanceof Mesh)) continue;
+      const materials = child.material as MeshStandardMaterial[];
+      const highlight = child.name === this.selectedId;
+      materials.forEach((material, index) => {
+        material.color.set((highlight ? HIGHLIGHT_COLORS : BASE_COLORS)[index] ?? BASE_COLORS[0]!);
+      });
     }
   }
   setWireframe(value: boolean): void {

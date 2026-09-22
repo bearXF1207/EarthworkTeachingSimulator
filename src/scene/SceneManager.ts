@@ -1,4 +1,4 @@
-import { Color, DirectionalLight, HemisphereLight, MOUSE, Scene, TOUCH, WebGLRenderer } from 'three';
+import { Color, DirectionalLight, HemisphereLight, Mesh, MOUSE, Raycaster, Scene, TOUCH, Vector2, WebGLRenderer } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CameraManager } from './CameraManager';
 import type { ViewMode } from './CameraManager';
@@ -84,8 +84,23 @@ export class SceneManager {
   setGridVisible(visible: boolean): void { this.ground?.setGridVisible(visible); }
   setDisplayMode(mode: DisplayMode): void { this.displayMode = mode; this.excavation?.setWireframe(mode === 'wireframe'); }
   getDisplayMode(): DisplayMode { return this.displayMode; }
-  /** 选中对象时高亮其基槽中心线（3D 视图下同样可见）。 */
+  /** 选中对象时高亮其基槽中心线与实体（3D 视图下同样可见）。 */
   setSelected(id: string | null): void { this.selectedId = id; if (!this.disposed) this.excavation?.setSelected(id); }
+  getSelected(): string | null { return this.selectedId; }
+  /**
+   * 画布拾取：返回光标下开挖对象的 id（Mesh 的 name 就是 id），没有命中返回 null。
+   * 只用开挖实体求交，忽略中心线、地面与辅助线。
+   */
+  pickAt(clientX: number, clientY: number): string | null {
+    if (this.disposed || !this.excavation) return null;
+    const rect = this.domElement.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return null;
+    const ndc = new Vector2(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const raycaster = new Raycaster();
+    raycaster.setFromCamera(ndc, this.cameras.active);
+    const targets = this.excavation.root.children.filter(child => child instanceof Mesh);
+    return raycaster.intersectObjects(targets, false)[0]?.object.name || null;
+  }
   /** 供测试与验收读取当前开挖网格（含中心线高亮状态）。 */
   get excavationMeshes(): ExcavationMeshes | null { return this.excavation; }
 

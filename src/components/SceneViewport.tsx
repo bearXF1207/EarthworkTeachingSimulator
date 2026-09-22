@@ -23,6 +23,10 @@ import { TrenchEditor } from './PropertyPanel/TrenchEditor';
 
 const TRENCH_LABEL = '直线基槽';
 const POLYLINE_LABEL = '折线基槽';
+/** 拖动阈值（CSS 像素）：相机旋转/平移不应被误判为拖动编辑。 */
+const DRAG_THRESHOLD = 3;
+/** 节点拾取半径（米）：光标落在基槽节点附近才进入拖动。 */
+const NODE_PICK_RADIUS = 2;
 /** 两个节点按直线基槽呈现，多节点按折线基槽呈现。 */
 const elementLabel = (element: ExcavationElement): string => element.type === 'trench'
   ? (element.points.length === 2 ? TRENCH_LABEL : POLYLINE_LABEL) : PIT_LABELS[element.type];
@@ -129,10 +133,86 @@ export function SceneViewport(): ReactElement {
     instance.setPreviewPoints([]);
   }
 
+  /** 拖动编辑：记录对象、节点与起始屏幕坐标，超过 3 CSS 像素才真正开始。 */
+  type DragState = { id: string; kind: 'node' | 'pit'; index: number; start: { x: number; y: number }; active: boolean; target: Point2 };
+  const drag = useRef<DragState | null>(null);
+
+  /** 光标在地面上的位置（俯视投影 + 相邻基槽中心线吸附）。 */
+  function dragPoint(event: { clientX: number; clientY: number }): Point2 | null {
+    const instance = manager.current;
+    if (!instance || instance.cameras.mode !== 'top') return null;
+    const ground = groundPointFromPointer(event.clientX, event.clientY, instance.cameras.active, instance.domElement.getBoundingClientRect());
+    if (!ground) return null;
+    const exclude = drag.current?.id;
+    const targets = trenchSnapTargets(project.elements, exclude ? { excludeId: exclude } : {});
+    const resolved = resolveSnap(ground, targets, { grid: snap, spacing: store.getSnapshot().settings.snapSpacing });
+    return resolved.point;
+  }
+  /** 拖动中的预览：基槽显示改后的中心线，基坑显示改后的槽顶轮廓。 */
+  function previewDrag(state: DragState): void {
+    const element = project.elements.find(item => item.id === state.id);
+    const instance = manager.current;
+    if (!element || !instance) return;
+    if (element.type === 'trench') {
+      const points = element.points.map((point, index) => index === state.index ? state.target : point);
+      instance.setPreviewPoints(points);
+      return;
+    }
+    try {
+      const ring = outline({ ...element, position: state.target }, true);
+      instance.setPreviewPoints([...ring, ring[0]!]);
+    } catch { instance.setPreviewPoints([]); }
+  }
+  function beginDrag(event: ReactPointerEvent<HTMLDivElement>): void {
+    const instance = manager.current;
+    if (!instance || liveState().kind !== 'select') return;
+    const ground = groundPointFromPointer(event.clientX, event.clientY, instance.cameras.active, instance.domElement.getBoundingClientRect());
+    const hit = instance.pickAt(event.clientX, event.clientY);
+    const element = project.elements.find(item => item.id === (hit ?? selected));
+    if (!element || !ground) return;
+    if (element.type === 'trench') {
+      let best = -1, bestDistance = Infinity;
+      element.points.forEach((point, index) => {
+        const distance = Math.hypot(point.x - ground.x, point.y - ground.y);
+        if (distance <= NODE_PICK_RADIUS && distance < bestDistance) { best = index; bestDistance = distance; }
+      });
+      if (best < 0) return;
+      drag.current = { id: element.id, kind: 'node', index: best, start: { x: event.clientX, y: event.clientY }, active: false, target: element.points[best]! };
+      return;
+    }
+    drag.current = { id: element.id, kind: 'pit', index: -1, start: { x: event.clientX, y: event.clientY }, active: false, target: element.position };
+  }
+  function commitDrag(): void {
+    const state = drag.current;
+    drag.current = null;
+    if (!state?.active) return;
+    const element = project.elements.find(item => item.id === state.id);
+    if (!element) return;
+    const next = element.type === 'trench'
+      ? { ...element, points: element.points.map((point, index) => index === state.index ? state.target : point) }
+      : { ...element, position: state.target };
+    // 只在释放时提交一次，失败保留原数据并提示原因。
+    const result = dispatch({ type: 'update', element: next });
+    if (!result.ok) setError(failure(result));
+    else setError('');
+    manager.current?.setPreviewPoints([]);
+  }
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
     pointerDown.current = { x: event.clientX, y: event.clientY };
+    beginDrag(event);
   }
+  function onPointerUp(): void { commitDrag(); }
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
+    const pending = drag.current;
+    if (pending) {
+      const moved = Math.hypot(event.clientX - pending.start.x, event.clientY - pending.start.y) > DRAG_THRESHOLD;
+      const point = dragPoint(event);
+      if (point && moved) {
+        pending.active = true; pending.target = point;
+        previewDrag(pending);
+      }
+      return;
+    }
     if (!toolActive) return;
     const state = liveState();
     const resolved = draftPoint(event, state);
@@ -146,6 +226,11 @@ export function SceneViewport(): ReactElement {
     const down = pointerDown.current; pointerDown.current = null;
     if (down && isDragGesture(down, { x: event.clientX, y: event.clientY })) return;
     const state = liveState();
+    if (state.kind === 'select') {
+      const hit = manager.current?.pickAt(event.clientX, event.clientY);
+      if (hit) { setSelected(hit); setError(''); }
+      return;
+    }
     const resolved = draftPoint(event, state);
     if (!resolved) return;
     if (state.kind === 'drawTrench') {
@@ -249,7 +334,7 @@ export function SceneViewport(): ReactElement {
   const active = project.elements.find(e => e.id === selected);
   return <><section className="scene-panel" aria-label="基础三维场景">
     <div className="scene-heading"><h2>施工场地</h2><span>{VIEW_LABELS[view]} · {project.elements.length} 个开挖对象 · 场地自动扩展</span></div>
-    <div className="viewport" ref={host} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onClick={onClick} onDoubleClick={onDoubleClick}
+    <div className="viewport" ref={host} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onClick={onClick} onDoubleClick={onDoubleClick}
       style={toolActive ? { cursor: 'crosshair' } : undefined} />
     <div className="scene-status" role={status.ready ? 'status' : 'alert'}>{status.message}</div>
     <ViewControls view={view} grid={grid} snap={snap} ready={status.ready} viewLocked={toolActive}

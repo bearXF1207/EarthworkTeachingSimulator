@@ -552,6 +552,51 @@ describe('M5 俯视绘制与放置', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
+  it('M6 画布点选：点击开挖实体即选中该对象', () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '俯视' })); // 拾取与拖动都基于俯视投影
+    const select = screen.getByRole('combobox', { name: '当前对象' });
+    const id = (select as HTMLSelectElement).options[1]!.value;
+    fireEvent.change(select, { target: { value: '' } });
+    expect(select).toHaveValue('');
+    // 点击基槽中心线上的一点：应重新选中该基槽
+    fireEvent.click(canvasElement(), groundClient(10, 0));
+    expect(select).toHaveValue(id);
+  });
+
+  it('M6 拖动节点：拖动中只出预览，松手提交一次更新', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '俯视' }));
+    dispatch.mockClear();
+    // 选中状态下拖动第一个节点 (0,0) → (0,6)
+    const start = groundClient(0, 0), end = groundClient(0, 6);
+    fireEvent.pointerDown(canvasElement(), start);
+    fireEvent.pointerMove(canvasElement(), end);
+    fireEvent.pointerUp(canvasElement(), end);
+    const calls = dispatch.mock.calls.filter(([command]) => command.type === 'update');
+    expect(calls).toHaveLength(1); // 拖动全程只提交一次
+    const updated = dispatch.mock.results.at(-1)?.value;
+    expect(updated.ok).toBe(true);
+    expect(updated.value.elements[0].points[0]).toEqual({ x: 0, y: 6 });
+    // 属性面板按 id 建 key，拖动后切换对象再切回即可看到新坐标（面板草稿不随外部改动刷新，属已知取舍）
+  });
+
+  it('M6 拖动阈值：小于 3 像素的移动不提交更新', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '俯视' }));
+    dispatch.mockClear();
+    const start = groundClient(0, 0);
+    fireEvent.pointerDown(canvasElement(), start);
+    fireEvent.pointerMove(canvasElement(), { clientX: start.clientX + 1, clientY: start.clientY + 1 });
+    fireEvent.pointerUp(canvasElement(), start);
+    expect(dispatch.mock.calls.filter(([command]) => command.type === 'update')).toHaveLength(0);
+  });
+
   it('三种基坑都能放置，重叠时拒绝并保持工具与既有模型', () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);
