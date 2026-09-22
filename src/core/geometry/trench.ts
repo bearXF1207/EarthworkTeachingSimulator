@@ -15,11 +15,14 @@ export type BuiltTrench = {
   bottomHole?: Point2[];
 };
 
-export function buildTrench(trench: Trench): BuiltTrench {
+/** `openEnds` 由场景层根据相邻开口判定：与相邻开挖贯通的端部省略端面，接口处不留墙。 */
+export type TrenchBuildOptions = { openStart?: boolean; openEnd?: boolean };
+
+export function buildTrench(trench: Trench, options: TrenchBuildOptions = {}): BuiltTrench {
   const outlines = trenchOutlines(trench);
   const { bottomOutline, topOutline, bottomHole, topHole } = outlines;
   const { geometry } = bottomHole && topHole
     ? buildAnnularSolid(bottomOutline, topOutline, bottomHole, topHole, -trench.depth, 0)
-    : buildRingSolid(bottomOutline, topOutline, -trench.depth, 0);
+    : buildRingSolid(bottomOutline, topOutline, -trench.depth, 0, options);
   return { geometry, topOutline, bottomOutline, ...(bottomHole ? { bottomHole } : {}), ...(topHole ? { topHole } : {}) };
 }

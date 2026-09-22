@@ -1,7 +1,40 @@
 import { BufferGeometry, Float32BufferAttribute, Group, Line, LineBasicMaterial, Mesh, MeshStandardMaterial } from 'three';
-import type { ExcavationElement, Point2 } from '../core/model/project';
+import type { ExcavationElement, Point2, Trench } from '../core/model/project';
 import { buildPit } from '../core/geometry/pit';
+import { distanceToSegment } from '../core/geometry/polygon';
 import { buildTrench } from '../core/geometry/trench';
+import { isClosedRing, trenchOutlines } from '../core/geometry/trenchOutline';
+import { openingOf } from '../core/validation/project';
+import type { Opening } from '../core/validation/project';
+
+/** 端面贴到相邻开口边界上的判定容差（米）。 */
+const ABUT_TOLERANCE = 1e-6;
+
+/**
+ * 判定基槽两端是否与相邻开挖贯通（收边或端点对接得到的共边连接）。
+ * 贯通的端部省略端面，接口处不会留一堵墙，视觉上真正打通。
+ */
+function abuttingEnds(element: Trench, openings: Opening[], index: number): { openStart?: boolean; openEnd?: boolean } {
+  if (isClosedRing(element.points)) return {};
+  const ring = trenchOutlines(element).topOutline;
+  const nodeCount = element.points.length;
+  if (ring.length !== 2 * nodeCount) return {};
+  const onRing = (point: Point2, loop: Point2[]): boolean => {
+    for (let i = 0; i < loop.length; i++) {
+      if (distanceToSegment(point, loop[i]!, loop[(i + 1) % loop.length]!) <= ABUT_TOLERANCE) return true;
+    }
+    return false;
+  };
+  // 相邻开口的外圈与岛（环形基槽内壁）都算贯通边界。
+  const onNeighbourBoundary = (point: Point2): boolean => openings.some((other, otherIndex) =>
+    otherIndex !== index && (onRing(point, other.ring) || (other.island ? onRing(point, other.island) : false)));
+  // 起点端面是回绕边 ring[2n-1]→ring[0]，终点端面是 ring[n-1]→ring[n]。
+  const startCap = [ring[2 * nodeCount - 1]!, ring[0]!] as const;
+  const endCap = [ring[nodeCount - 1]!, ring[nodeCount]!] as const;
+  const openStart = startCap.every(onNeighbourBoundary);
+  const openEnd = endCap.every(onNeighbourBoundary);
+  return { ...(openStart ? { openStart: true } : {}), ...(openEnd ? { openEnd: true } : {}) };
+}
 
 /** 基槽中心线的常态与选中高亮颜色，稍微抬高避免与地面共面闪烁。 */
 const CENTERLINE_COLOR = 0x8fa396;
@@ -20,9 +53,10 @@ export class ExcavationMeshes {
   private disposed = false;
   constructor(elements: ExcavationElement[], wireframe = false) {
     try {
-      for (const element of elements) {
+      const openings = elements.map(element => openingOf(element));
+      for (const [index, element] of elements.entries()) {
         if (element.type === 'trench') {
-          const built = buildTrench(element);
+          const built = buildTrench(element, abuttingEnds(element, openings, index));
           this.add(element.id, built, wireframe, built.topHole);
           this.addCenterline(element.id, element.points);
         } else this.add(element.id, buildPit(element), wireframe);

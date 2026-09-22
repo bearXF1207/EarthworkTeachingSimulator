@@ -1,5 +1,5 @@
 import { outline } from '../geometry/pitOutline';
-import { distanceToSegment, inside, ringsOverlap, segmentsTouch } from '../geometry/polygon';
+import { distanceToSegment, edgesProperlyCross, inside, ringsOverlap, segmentsTouch } from '../geometry/polygon';
 import { trenchOutlines } from '../geometry/trenchOutline';
 import type { ExcavationElement, Point2, Project, Result, ValidationIssue } from '../model/project';
 import { normalizeDegrees } from '../model/project';
@@ -12,15 +12,25 @@ export { distanceToSegment, inside };
 
 type CircleOpening = { x: number; y: number; radius: number };
 /** 顶部开口：统一用逆时针轮廓描述边界，圆坑额外保留解析半径，避免漏过内接弦之外的细小重叠。 */
-type Opening = { ring: Point2[]; circle: CircleOpening | null };
+/** 开挖对象在地面的开口：外圈 + 解析圆（圆坑），环形基槽再带一个内圈岛。 */
+export type Opening = { ring: Point2[]; circle: CircleOpening | null; island?: Point2[] };
 
 export function openingOf(element: ExcavationElement): Opening {
   if (element.type === 'circular-pit') return {
     ring: outline(element, true),
     circle: { x: element.position.x, y: element.position.y, radius: element.bottomDiameter / 2 + element.depth * element.slope },
   };
-  if (element.type === 'trench') return { ring: trenchOutlines(element).topOutline, circle: null };
+  if (element.type === 'trench') {
+    const outlines = trenchOutlines(element);
+    // 环形基槽的开口是“外圈减内圈岛”：岛仍属地面，允许继续在岛内开挖。
+    return { ring: outlines.topOutline, circle: null, ...(outlines.topHole ? { island: outlines.topHole } : {}) };
+  }
   return { ring: outline(element, true), circle: null };
+}
+
+/** 该环是否整体落在岛内（含贴边）：此时与外圈槽带没有交叠。 */
+function insideIsland(ring: Point2[], island: Point2[]): boolean {
+  return !edgesProperlyCross(ring, island) && ring.every(point => inside(point, island));
 }
 
 function ringTouchesCircle(ring: Point2[], circle: CircleOpening): boolean {
@@ -37,8 +47,11 @@ function ringsTouch(a: Point2[], b: Point2[]): boolean {
  * 基坑与基槽、基坑之间保持更严格的“重叠、包含或相切”判定。
  */
 export function openingsConflict(a: ExcavationElement, b: ExcavationElement): boolean {
-  if (a.type === 'trench' && b.type === 'trench') return ringsOverlap(openingOf(a).ring, openingOf(b).ring);
   const first = openingOf(a), second = openingOf(b);
+  // 岛是地面：任一方的开口整体落在对方岛内时不冲突（允许在环形基槽的岛内继续开槽）。
+  if (first.island && insideIsland(second.ring, first.island)) return false;
+  if (second.island && insideIsland(first.ring, second.island)) return false;
+  if (a.type === 'trench' && b.type === 'trench') return ringsOverlap(first.ring, second.ring);
   if (first.circle && second.circle) {
     return Math.hypot(first.circle.x - second.circle.x, first.circle.y - second.circle.y) <= first.circle.radius + second.circle.radius + EPSILON;
   }

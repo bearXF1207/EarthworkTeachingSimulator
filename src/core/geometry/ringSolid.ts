@@ -13,7 +13,10 @@ const DEGENERATE_AREA = 1e-10;
  * 基坑底部四边形、基槽端面与折线槽底由同一绕序规则得到。
  * 折线槽底可能是凹多边形并含共线顶点，因此使用支持凹多边形的三角化并剔除退化三角形。
  */
-export function buildRingSolid(bottom: Point2[], top: Point2[], bottomZ: number, topZ: number): RingSolid {
+/** 端部与相邻开挖贯通时省略该端端面，避免在接口处留一堵墙。 */
+export type RingSolidOptions = { openStart?: boolean; openEnd?: boolean };
+
+export function buildRingSolid(bottom: Point2[], top: Point2[], bottomZ: number, topZ: number, options: RingSolidOptions = {}): RingSolid {
   if (bottom.length < 3 || bottom.length !== top.length) throw new Error('开挖轮廓点数不足或顶底不匹配');
   const positions: number[] = [];
   const vertex = (p: Point2, z: number): void => { positions.push(p.x, p.y, z); };
@@ -28,6 +31,9 @@ export function buildRingSolid(bottom: Point2[], top: Point2[], bottomZ: number,
   const bottomVertexCount = positions.length / 3;
   if (!bottomVertexCount) throw new Error('开挖底面三角化失败');
   for (let i = 0; i < bottom.length; i++) {
+    // 端面：i=0 是回绕到首点的那条边（起点端面），i=n-1 是终点端面。
+    if (options.openStart && i === 0) continue;
+    if (options.openEnd && i === bottom.length - 1) continue;
     const j = (i + 1) % bottom.length;
     const b = bottom[i]!, bn = bottom[j]!, t = top[i]!, tn = top[j]!;
     // 逆时针轮廓：这些面朝向开挖空腔，绕序与底面相反。

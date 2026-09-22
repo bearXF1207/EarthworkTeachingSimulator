@@ -102,7 +102,7 @@ describe('M5 闭合连接', () => {
     const snapped = resolveSnap(p(10, 0.6), trenchSnapTargets([first]));
     expect(snapped.kind).toBe('centerline');
     // 从相邻槽中心线起画，顶半宽 2 的端面收边后退到对方槽顶边界 y=2
-    const trimmed = trimEndsToNeighbours([snapped.point, p(10, 12)], 2, [trenchOutlines(first).topOutline])!;
+    const trimmed = trimEndsToNeighbours([snapped.point, p(10, 12)], 2, [{ ring: trenchOutlines(first).topOutline }])!;
     expect(trimmed).toHaveLength(2);
     // 收边留 10nm 级缝隙保证地面三角化稳定，按微米级容差比较
     expect(trimmed[0]!.x).toBeCloseTo(10, 6);
@@ -125,16 +125,16 @@ describe('M5 闭合连接', () => {
 
   it('整条中心线落在相邻槽内时收边失败：返回 null 由命令层拒绝', () => {
     const first = trench('trench-1', [p(0, 0), p(20, 0)]);
-    const ring = trenchOutlines(first).topOutline;
+    const neighbour = { ring: trenchOutlines(first).topOutline };
     // 整段（含端面角点）都在对方槽内：收边后不再构成一段
-    expect(trimEndsToNeighbours([p(5, 0), p(5, 1)], 2, [ring])).toBeNull();
+    expect(trimEndsToNeighbours([p(5, 0), p(5, 1)], 2, [neighbour])).toBeNull();
     // 一端在槽内、一端在外：收边后仍然是一段合法中心线
-    const trimmed = trimEndsToNeighbours([p(5, 0), p(5, 12)], 2, [ring])!;
+    const trimmed = trimEndsToNeighbours([p(5, 0), p(5, 12)], 2, [neighbour])!;
     expect(trimmed[0]!.x).toBeCloseTo(5, 6);
     expect(trimmed[0]!.y).toBeCloseTo(2, 6);
     expect(trimmed[1]).toEqual(p(5, 12));
     // 与对方边界正好共边时不收边
-    expect(trimEndsToNeighbours([p(5, 2), p(5, 12)], 2, [ring])).toEqual([p(5, 2), p(5, 12)]);
+    expect(trimEndsToNeighbours([p(5, 2), p(5, 12)], 2, [neighbour])).toEqual([p(5, 2), p(5, 12)]);
   });
 
   it('平行并排：贴合线（次级目标）让两槽共边贴合', () => {
@@ -309,17 +309,43 @@ describe('M5 环形基槽（中心线首尾闭合）', () => {
     } finally { ground.dispose(); }
   });
 
-  it('开口冲突：平行贴边可接受，岛内放置基坑被拒绝', () => {
+  it('开口冲突：平行贴边可接受，槽带内仍拒绝', () => {
     // 环形外圈槽顶为 x∈[-2,22]、y∈[-2,22]；这一条的槽顶 x∈[22,26]、y∈[-2,22]，只共边。
     const beside = trench('trench-2', [p(24, 0), p(24, 20)]);
     expect(openingsConflict(square(), beside)).toBe(false);
     expect(validateProject(projectWith(square(), beside)).ok).toBe(true);
-    // 环形基槽的内岛按“外圈占用”参与判定，岛内不允许放置其他开挖对象。
-    const inside = trench('trench-3', [p(10, 8), p(10, 12)]);
-    expect(openingsConflict(square(), inside)).toBe(true);
-    const result = validateProject(projectWith(square(), inside));
+    // 压在外圈槽带上的仍然拒绝
+    const onBand = trench('trench-3', [p(0, 8), p(0, 12)]);
+    expect(openingsConflict(square(), onBand)).toBe(true);
+    const result = validateProject(projectWith(square(), onBand));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.issues[0]?.message).toContain('内部交叠');
+  });
+
+  it('岛内允许继续开槽：整体落在岛内不冲突，压到内边界时自动收边到岛边', () => {
+    const islandTrench = trench('trench-2', [p(10, 10), p(10, 16)]);
+    expect(openingsConflict(square(), islandTrench)).toBe(false);
+    expect(validateProject(projectWith(square(), islandTrench)).ok).toBe(true);
+    // 越过内边界继续往外画：按岛边界收边，开口与环形槽内壁共边（打通）
+    const crossings = { ring: trenchOutlines(square()).topOutline, island: trenchOutlines(square()).topHole! };
+    const trimmed = trimEndsToNeighbours([p(10, 10), p(10, 20)], 2, [crossings])!;
+    expect(trimmed[0]).toEqual(p(10, 10));
+    expect(trimmed[1]!.x).toBeCloseTo(10, 6);
+    expect(trimmed[1]!.y).toBeCloseTo(18, 5);
+    const connected = trench('trench-3', trimmed);
+    expect(openingsConflict(square(), connected)).toBe(false);
+    expect(validateProject(projectWith(square(), connected)).ok).toBe(true);
+    // 岛内沟槽的地面：岛面被挖掉，槽内有开口、岛其余部分仍有地面
+    const outlines = trenchOutlines(square());
+    const ground = new GroundManager([outlines.topOutline, trenchOutlines(connected).topOutline], 100, [outlines.topHole!]);
+    try {
+      ground.root.updateMatrixWorld(true);
+      const patches = ground.root.children.filter(child => child.name === 'ground-island');
+      const hit = (x: number, y: number): number =>
+        new Raycaster(new Vector3(x, y, 10), new Vector3(0, 0, -1)).intersectObjects([ground.ground, ...patches], false).length;
+      expect(hit(10, 14)).toBe(0); // 岛内基槽处没有地面
+      expect(hit(6, 14)).toBe(1); // 岛其余部分仍是地面
+    } finally { ground.dispose(); }
   });
 
   it('吸附：草稿起点参与吸附，靠近起点时优先闭合', () => {

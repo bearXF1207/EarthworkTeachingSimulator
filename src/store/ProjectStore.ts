@@ -17,11 +17,14 @@ export type Prepared = { commit: () => void; dispose: () => void };
  */
 function trimForConnection(element: ExcavationElement, existing: ExcavationElement[]): ExcavationElement | null {
   if (element.type !== 'trench' || isClosedRing(element.points)) return element;
-  const neighbourRings = existing
+  const neighbours = existing
     .filter(other => other.id !== element.id && other.type !== 'circular-pit')
-    .map(other => openingOf(other).ring);
+    .map(other => {
+      const opening = openingOf(other);
+      return opening.island ? { ring: opening.ring, island: opening.island } : { ring: opening.ring };
+    });
   const halfWidth = element.bottomWidth / 2 + element.depth * element.slope;
-  const points = trimEndsToNeighbours(element.points, halfWidth, neighbourRings);
+  const points = trimEndsToNeighbours(element.points, halfWidth, neighbours);
   return points ? { ...element, points } : null;
 }
 
@@ -32,7 +35,8 @@ export class ProjectStore {
     const next = this.getSnapshot();
     if (command.type === 'add') {
       const element = trimForConnection(command.element, next.elements);
-      if (!element) return { ok: false, issues: [{ code: 'invalid', path: 'elements', message: '中心线完全落在相邻开挖范围内，无法生成基槽' }] };
+      // 岛内（含环形基槽围出的岛）允许继续开槽；只有整条中心线都压在相邻槽带里才算重复开挖。
+      if (!element) return { ok: false, issues: [{ code: 'invalid', path: 'elements', message: '中心线整段落在相邻开挖的槽带内，与既有开挖重叠：请从槽带外起画，或改用属性面板调整既有对象' }] };
       command = { ...command, element };
     }
     if (command.type === 'add') next.elements.push(command.element);
