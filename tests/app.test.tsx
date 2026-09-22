@@ -23,6 +23,23 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
+/** 俯视正交相机（视高 140、画布 800×500）下地面坐标到画布客户端坐标的换算。 */
+const HALF_WIDTH = 112, HALF_HEIGHT = 70;
+const groundClient = (x: number, y: number): { clientX: number; clientY: number } =>
+  ({ clientX: 400 + x / HALF_WIDTH * 400, clientY: 250 - y / HALF_HEIGHT * 250 });
+const canvasElement = (): Element => {
+  const canvas = document.querySelector('.viewport canvas');
+  if (!canvas) throw new Error('missing canvas');
+  return canvas;
+};
+const clickGround = (x: number, y: number, detail = 1): void => { fireEvent.click(canvasElement(), { ...groundClient(x, y), detail }); };
+/** 走完整绘制流程：切换工具、逐点单击、Enter 完成。 */
+const drawTrench = (points: [number, number][]): void => {
+  fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+  for (const [x, y] of points) clickGround(x, y);
+  fireEvent.keyDown(window, { key: 'Enter' });
+};
+
 describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
   it('M2 实际三角化失败保留旧场景与数据，候选坑资源被释放', () => {
     const host = document.createElement('div'); document.body.append(host);
@@ -47,7 +64,12 @@ describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
   it('M2 创建三类型、合法编辑、非法草稿保留模型、重载保留项目并可删除', () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);
-    for (const label of ['方形基坑', '矩形基坑', '圆形基坑']) fireEvent.click(screen.getByRole('button', { name: `添加${label}` }));
+    fireEvent.click(screen.getByRole('button', { name: '放置基坑' }));
+    clickGround(0, 0);
+    fireEvent.change(screen.getByRole('combobox', { name: '基坑类型' }), { target: { value: 'rect-pit' } });
+    clickGround(40, 0);
+    fireEvent.change(screen.getByRole('combobox', { name: '基坑类型' }), { target: { value: 'circular-pit' } });
+    clickGround(80, 0);
     expect(screen.getByRole('combobox', { name: '显示模式' })).toBeEnabled();
     expect(screen.queryByRole('textbox', { name: '旋转角（°）' })).not.toBeInTheDocument();
     const depth = screen.getByRole('textbox', { name: '开挖深度（m）' });
@@ -57,8 +79,12 @@ describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
     fireEvent.change(depth, { target: { value: '' } }); expect(depth).toHaveValue('');
     expect(dispatch.mock.results.at(-1)?.value).toBe(last);
     fireEvent.change(depth, { target: { value: '0' } }); expect(dispatch.mock.results.at(-1)?.value.ok).toBe(false);
-    fireEvent.change(screen.getByRole('combobox', { name: '当前对象' }), { target: { value: 'pit-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: '当前对象' }), { target: { value: 'pit-3' } });
+    const select = screen.getByRole('combobox', { name: '当前对象' }) as HTMLSelectElement;
+    const ids = [...select.options].map(option => option.value).filter(value => value !== '');
+    expect(ids).toHaveLength(3);
+    fireEvent.change(select, { target: { value: ids[0] } });
+    expect(screen.getByRole('textbox', { name: '旋转角（°）' })).toBeVisible();
+    fireEvent.change(select, { target: { value: ids[2] } });
     expect(screen.getByRole('textbox', { name: '开挖深度（m）' })).toHaveValue('3');
     fireEvent.click(screen.getByRole('button', { name: '重新加载场景' }));
     expect(screen.getByRole('textbox', { name: '开挖深度（m）' })).toHaveValue('3');
@@ -83,8 +109,9 @@ describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
     const prepared = scene.prepareProject(store.getSnapshot()); prepared.dispose(); prepared.dispose();
     expect(geometryDispose.mock.calls.length - initialGeometry).toBe(404);
     scene.dispose(); host.remove();
-    expect(geometryDispose.mock.calls.length - initialGeometry).toBe(408);
-    expect(materialDispose.mock.calls.length - initialMaterial).toBe(510);
+    // 卸载时额外释放预览线：折线 + 起点标记共 2 个几何与 2 个材质。
+    expect(geometryDispose.mock.calls.length - initialGeometry).toBe(410);
+    expect(materialDispose.mock.calls.length - initialMaterial).toBe(512);
   });
   it('StrictMode不产生双canvas/双循环，支持四视角、网格与重置', () => {
     const setView = vi.spyOn(SceneManager.prototype, 'setView');
@@ -214,12 +241,13 @@ describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
 });
 
 describe('M3 直线基槽界面', () => {
-  it('创建基槽、编辑节点与截面参数、拒绝非法输入并删除', () => {
+  it('绘制两节点基槽、编辑节点与截面参数、拒绝非法输入并删除', () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '添加直线基槽' }));
+    drawTrench([[0, 0], [8, 0]]);
     const depth = screen.getByRole('textbox', { name: '开挖深度（m）' });
-    expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toHaveValue('-12');
+    expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toHaveValue('0');
+    expect(screen.getByRole('textbox', { name: '终点 X（m）' })).toHaveValue('8');
     expect(screen.getByRole('textbox', { name: '底宽（m）' })).toHaveValue('2');
     fireEvent.change(depth, { target: { value: '3' } });
     const accepted = dispatch.mock.results.at(-1)?.value;
@@ -229,7 +257,7 @@ describe('M3 直线基槽界面', () => {
     expect(dispatch.mock.results.at(-1)?.value).toBe(accepted);
     expect(depth).toHaveValue('');
     fireEvent.change(depth, { target: { value: '3' } });
-    fireEvent.change(screen.getByRole('textbox', { name: '终点 X（m）' }), { target: { value: '-12' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '终点 X（m）' }), { target: { value: '0' } });
     expect(dispatch.mock.results.at(-1)?.value.ok).toBe(false);
     expect(screen.getByRole('alert')).toHaveTextContent('中心线长度必须大于');
     fireEvent.change(screen.getByRole('textbox', { name: '终点 X（m）' }), { target: { value: '8' } });
@@ -242,33 +270,174 @@ describe('M3 直线基槽界面', () => {
 
   it('基槽与基坑可共存，选中对象切换时属性面板同步', () => {
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '添加方形基坑' }));
-    fireEvent.click(screen.getByRole('button', { name: '添加直线基槽' }));
+    fireEvent.click(screen.getByRole('button', { name: '放置基坑' }));
+    clickGround(30, 30);
+    drawTrench([[0, 0], [8, 0]]);
     expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toBeVisible();
-    fireEvent.change(screen.getByRole('combobox', { name: '当前对象' }), { target: { value: 'pit-1' } });
+    const select = screen.getByRole('combobox', { name: '当前对象' }) as HTMLSelectElement;
+    const pitId = [...select.options].map(option => option.value).find(value => value !== select.value && value !== '');
+    expect(pitId).toBeTruthy();
+    fireEvent.change(select, { target: { value: pitId } });
     expect(screen.getByRole('textbox', { name: '底边长（m）' })).toHaveValue('4');
     expect(screen.queryByRole('textbox', { name: '起点 X（m）' })).not.toBeInTheDocument();
     expect(screen.getByText(/2 个开挖对象/)).toBeVisible();
   });
 });
 
-describe('M4 折线基槽界面', () => {
-  it('创建 90° 折线基槽、编辑中间节点、拒绝非法节点并恢复', () => {
+describe('M5 俯视绘制与放置', () => {
+  it('单击三点后 Enter 只产生一个三节点基槽，绘制期间锁定视角', () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: '添加折线基槽' }));
-    expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toHaveValue('-12');
-    expect(screen.getByRole('textbox', { name: '节点 2 X（m）' })).toHaveValue('8');
-    expect(screen.getByRole('textbox', { name: '节点 2 Y（m）' })).toHaveValue('-220');
-    expect(screen.getByRole('textbox', { name: '终点 Y（m）' })).toHaveValue('-232');
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    expect(screen.getByRole('button', { name: '俯视' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '自由视角' })).toBeDisabled();
+    clickGround(0, 0); clickGround(10, 0); clickGround(10, 10);
+    expect(screen.getByText(/已设置 3 个节点/)).toBeVisible();
+    expect(screen.getByText('第 2 段：10.00m · 方位角 90.0°')).toBeVisible();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const result = dispatch.mock.results.at(-1)?.value;
+    expect(result.ok).toBe(true);
+    expect(result.value.elements).toHaveLength(1);
+    expect(result.value.elements[0].points).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }]);
+    expect(screen.getByRole('button', { name: '自由视角' })).toBeEnabled();
+    expect(FakeRenderer.active.size).toBe(1);
+  });
+
+  it('真实双击序列不产生重复尾点，也不产生第二个对象', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(0, 0); clickGround(10, 0);
+    clickGround(10, 10, 1);
+    clickGround(10, 10, 2);
+    fireEvent.doubleClick(canvasElement(), groundClient(10, 10));
+    expect(dispatch.mock.results).toHaveLength(1);
+    const result = dispatch.mock.results[0]?.value;
+    expect(result.ok).toBe(true);
+    expect(result.value.elements).toHaveLength(1);
+    expect(result.value.elements[0].points).toEqual([{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }]);
+  });
+
+  it('仅一个节点时 Enter 提示至少两个节点，Esc 取消不改变项目', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(3, 3);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(screen.getByRole('alert')).toHaveTextContent('至少需要两个节点');
+    expect(dispatch).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByText(/已设置/)).not.toBeInTheDocument();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+  });
+
+  it('拖动平移不落点，画布外点击不添加节点', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    // jsdom 未实现指针捕获，OrbitControls 会直接调用，这里补上替身。
+    Object.defineProperty(canvasElement(), 'setPointerCapture', { value: () => undefined });
+    Object.defineProperty(canvasElement(), 'releasePointerCapture', { value: () => undefined });
+    fireEvent.pointerDown(canvasElement(), groundClient(0, 0));
+    fireEvent.click(canvasElement(), groundClient(30, 0));
+    fireEvent.click(document.body, groundClient(40, 0));
+    expect(screen.getByText(/已设置 0 个节点/)).toBeVisible();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('长度与角度输入推算下一点，精确输入不受吸附影响', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(1, 2);
+    fireEvent.change(screen.getByRole('textbox', { name: '本段长度（m）' }), { target: { value: '8' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '方位角（°）' }), { target: { value: '90' } });
+    fireEvent.click(screen.getByRole('button', { name: '添加下一点' }));
+    expect(screen.getByText(/已设置 2 个节点/)).toBeVisible();
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const points = dispatch.mock.results.at(-1)?.value.value.elements[0].points;
+    expect(points[1]?.x).toBeCloseTo(1, 9);
+    expect(points[1]?.y).toBeCloseTo(10, 9);
+  });
+
+  it('角度 -90 与 450 正规化后得到同一下一点', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(0, 0);
+    fireEvent.change(screen.getByRole('textbox', { name: '本段长度（m）' }), { target: { value: '12.5' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '方位角（°）' }), { target: { value: '-90' } });
+    fireEvent.click(screen.getByRole('button', { name: '添加下一点' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '方位角（°）' }), { target: { value: '450' } });
+    fireEvent.click(screen.getByRole('button', { name: '添加下一点' }));
+    expect(screen.getByText('第 1 段：12.50m · 方位角 270.0°')).toBeVisible();
+    expect(screen.getByText('第 2 段：12.50m · 方位角 90.0°')).toBeVisible();
+  });
+
+  it('吸附开关只影响鼠标落点，输入框 Enter 提交输入段而不完成整槽', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '放置基坑' }));
+    clickGround(1.2, 2.7);
+    const center = (): number => Number((screen.getByRole('textbox', { name: '中心 X（m）' }) as HTMLInputElement).value);
+    expect(center()).toBe(1);
+    expect(screen.getByRole('textbox', { name: '中心 Y（m）' })).toHaveValue('3');
+    fireEvent.click(screen.getByRole('checkbox', { name: '吸附1m网格' }));
+    clickGround(41.2, 32.7);
+    expect(center()).toBeCloseTo(41.2, 6);
+    expect(dispatch.mock.results.at(-1)?.value.ok).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(0, 0);
+    const length = screen.getByRole('textbox', { name: '本段长度（m）' });
+    length.focus();
+    fireEvent.keyDown(length, { key: 'Enter' });
+    expect(screen.getByText(/已设置 2 个节点/)).toBeVisible();
+    expect(dispatch.mock.results.at(-1)?.value.value.elements).toHaveLength(2);
+    fireEvent.keyDown(length, { key: 'Escape' });
+    expect(screen.getByText(/已设置 2 个节点/)).toBeVisible();
+    const composing = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    Object.defineProperty(composing, 'isComposing', { value: true });
+    window.dispatchEvent(composing);
+    expect(screen.getByText(/已设置 2 个节点/)).toBeVisible();
+    expect(dispatch.mock.results.at(-1)?.value.value.elements).toHaveLength(2);
+  });
+
+  it('三种基坑都能放置，重叠时拒绝并保持工具与既有模型', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '放置基坑' }));
+    clickGround(0, 0);
+    expect(dispatch.mock.results.at(-1)?.value.ok).toBe(true);
+    clickGround(0, 0);
+    expect(dispatch.mock.results.at(-1)?.value.ok).toBe(false);
+    expect(screen.getByRole('alert')).toHaveTextContent('重叠');
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    fireEvent.change(screen.getByRole('combobox', { name: '基坑类型' }), { target: { value: 'rect-pit' } });
+    clickGround(40, 0);
+    fireEvent.change(screen.getByRole('combobox', { name: '基坑类型' }), { target: { value: 'circular-pit' } });
+    clickGround(80, 0);
+    expect(screen.getByText(/3 个开挖对象/)).toBeVisible();
+    expect(dispatch.mock.results.at(-1)?.value.value.elements.map((e: { type: string }) => e.type))
+      .toEqual(['square-pit', 'rect-pit', 'circular-pit']);
+  });
+});
+
+describe('M4 折线基槽界面', () => {
+  it('绘制 90° 折线基槽、编辑中间节点、拒绝非法节点并恢复', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [10, 0], [10, 10]]);
+    expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toHaveValue('0');
+    expect(screen.getByRole('textbox', { name: '节点 2 X（m）' })).toHaveValue('10');
+    expect(screen.getByRole('textbox', { name: '节点 2 Y（m）' })).toHaveValue('0');
+    expect(screen.getByRole('textbox', { name: '终点 Y（m）' })).toHaveValue('10');
     const added = dispatch.mock.results.at(-1)?.value;
     expect(added.ok).toBe(true);
     expect(added.value.elements[0].points).toHaveLength(3);
-    expect(screen.getByRole('combobox', { name: '当前对象' })).toHaveValue('polyline-1');
-    fireEvent.change(screen.getByRole('textbox', { name: '终点 Y（m）' }), { target: { value: '-220' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '终点 Y（m）' }), { target: { value: '0' } });
     expect(dispatch.mock.results.at(-1)?.value.ok).toBe(false);
     expect(screen.getByRole('alert')).toHaveTextContent('中心线长度必须大于');
-    fireEvent.change(screen.getByRole('textbox', { name: '终点 Y（m）' }), { target: { value: '-232' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '终点 Y（m）' }), { target: { value: '10' } });
     expect(dispatch.mock.results.at(-1)?.value.ok).toBe(true);
     expect(dispatch.mock.results.at(-1)?.value.value.elements[0].points).toHaveLength(3);
     expect(FakeRenderer.active.size).toBe(1);

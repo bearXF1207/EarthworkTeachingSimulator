@@ -4,7 +4,8 @@ import { CameraManager } from './CameraManager';
 import type { ViewMode } from './CameraManager';
 import { GroundManager } from './GroundManager';
 import { ExcavationMeshes } from './MeshFactory';
-import type { Project } from '../core/model/project';
+import { PreviewLine } from './PreviewLine';
+import type { Point2, Project } from '../core/model/project';
 import type { Prepared } from '../store/ProjectStore';
 
 export type DisplayMode = 'solid' | 'wireframe';
@@ -14,6 +15,8 @@ export type RendererPort = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPi
 
 export class SceneManager {
   readonly cameras = new CameraManager();
+  /** 绘制中的未提交预览；由 SceneManager 统一拥有与释放。 */
+  readonly preview = new PreviewLine();
   private readonly scene = new Scene();
   private readonly renderer: RendererPort;
   private ground: GroundManager | null = null;
@@ -31,7 +34,7 @@ export class SceneManager {
     try {
       this.scene.background = new Color(0x17231f);
       this.ground = new GroundManager();
-      this.scene.add(this.ground.root, new HemisphereLight(0xeaf2ff, 0x665438, 2));
+      this.scene.add(this.ground.root, this.preview.root, new HemisphereLight(0xeaf2ff, 0x665438, 2));
       const sun = new DirectionalLight(0xffefcf, 2.5);
       sun.position.set(30, -40, 80);
       this.scene.add(sun);
@@ -71,6 +74,11 @@ export class SceneManager {
     this.cameras.reset();
     this.installControls();
   }
+
+  /** 投影与事件绑定必须使用画布自身的 bounding rect。 */
+  get domElement(): HTMLCanvasElement { return this.renderer.domElement; }
+
+  setPreviewPoints(points: Point2[]): void { if (!this.disposed) this.preview.setPoints(points); }
 
   setGridVisible(visible: boolean): void { this.ground?.setGridVisible(visible); }
   setDisplayMode(mode: DisplayMode): void { this.displayMode = mode; this.excavation?.setWireframe(mode === 'wireframe'); }
@@ -146,6 +154,7 @@ export class SceneManager {
     this.renderer.setAnimationLoop(null);
     this.observer?.disconnect();
     this.controls?.dispose();
+    this.preview.dispose();
     this.ground?.dispose();
     this.excavation?.dispose();
     this.renderer.domElement.removeEventListener('webglcontextlost', this.onContextLost);

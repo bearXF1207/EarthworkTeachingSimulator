@@ -16,3 +16,29 @@ export type Result<T> = { ok: true; value: T } | { ok: false; issues: Validation
 export const emptyProject = (): Project => ({ version: 1, name: '未命名工程', units: 'm', elements: [],
   settings: { gridVisible: true, snapEnabled: true, snapSpacing: 1, groundSize: 100 } });
 export const normalizeDegrees = (degrees: number): number => ((degrees % 360) + 360) % 360;
+
+/** 基槽整槽共用的截面草稿参数。 */
+export type TrenchSection = { bottomWidth: number; depth: number; slope: number };
+/** 基坑放置草稿：四种尺寸字段同时保存，切换类型时不必重新输入。 */
+export type PitDraftParams = {
+  type: Pit['type']; bottomSize: number; bottomLength: number; bottomWidth: number; bottomDiameter: number;
+  depth: number; slope: number; rotation: number;
+};
+export const defaultPitDraft = (type: Pit['type']): PitDraftParams => ({
+  type, bottomSize: 4, bottomLength: 6, bottomWidth: 4, bottomDiameter: 4, depth: 2, slope: .5, rotation: 0,
+});
+
+/** 由草稿构造候选基坑（未校验）；放置预览与提交共用，避免两处字段不一致。 */
+export function pitFromDraft(id: string, position: Point2, draft: PitDraftParams): Pit {
+  const base = { id, position: { x: position.x, y: position.y }, depth: draft.depth, slope: draft.slope };
+  if (draft.type === 'square-pit') return { ...base, type: 'square-pit', bottomSize: draft.bottomSize, rotation: draft.rotation };
+  if (draft.type === 'rect-pit') {
+    return { ...base, type: 'rect-pit', bottomLength: draft.bottomLength, bottomWidth: draft.bottomWidth, rotation: draft.rotation };
+  }
+  return { ...base, type: 'circular-pit', bottomDiameter: draft.bottomDiameter };
+}
+
+/** 由草稿构造候选基槽（未校验），节点为副本以免后续编辑草稿影响已提交对象。 */
+export function trenchFromDraft(id: string, points: Point2[], section: TrenchSection): Trench {
+  return { id, type: 'trench', points: points.map(p => ({ x: p.x, y: p.y })), ...section };
+}
