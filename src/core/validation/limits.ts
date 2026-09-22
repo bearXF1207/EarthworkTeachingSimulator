@@ -6,3 +6,6 @@ export const MAX_SIZE = 1000;
 export const MIN_SLOPE = 0;
 export const MAX_SLOPE = 5;
 export const MAX_ELEMENTS = 500;
+export const MIN_NODES = 2;
+export const MAX_NODES = 200;
+export const MIN_SEGMENT_LENGTH = 0.01;

@@ -32,7 +32,11 @@ describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
     store.dispatch({ type: 'add', element }, prepare);
     const before = store.getSnapshot(), groundDispose = vi.spyOn(GroundManager.prototype, 'dispose');
     const geometryDispose = vi.spyOn(BufferGeometry.prototype, 'dispose');
-    const triangulate = vi.spyOn(ShapeUtils, 'triangulateShape').mockReturnValue([]);
+    // 只让带孔地面三角化失败：槽底/坑底三角化不传孔洞，仍走真实实现，
+    // 这样候选坑网格已经建立，失败后必须被释放。
+    const actualTriangulate = ShapeUtils.triangulateShape.bind(ShapeUtils);
+    const triangulate = vi.spyOn(ShapeUtils, 'triangulateShape')
+      .mockImplementation((contour, holes) => (holes.length ? [] : actualTriangulate(contour, holes)));
     try {
       expect(store.dispatch({ type: 'update', element: { ...element, depth: 3 } }, prepare).ok).toBe(false);
       expect(store.getSnapshot()).toEqual(before); expect(groundDispose).not.toHaveBeenCalled();
@@ -245,5 +249,28 @@ describe('M3 直线基槽界面', () => {
     expect(screen.getByRole('textbox', { name: '底边长（m）' })).toHaveValue('4');
     expect(screen.queryByRole('textbox', { name: '起点 X（m）' })).not.toBeInTheDocument();
     expect(screen.getByText(/2 个开挖对象/)).toBeVisible();
+  });
+});
+
+describe('M4 折线基槽界面', () => {
+  it('创建 90° 折线基槽、编辑中间节点、拒绝非法节点并恢复', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '添加折线基槽' }));
+    expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toHaveValue('-12');
+    expect(screen.getByRole('textbox', { name: '节点 2 X（m）' })).toHaveValue('8');
+    expect(screen.getByRole('textbox', { name: '节点 2 Y（m）' })).toHaveValue('-220');
+    expect(screen.getByRole('textbox', { name: '终点 Y（m）' })).toHaveValue('-232');
+    const added = dispatch.mock.results.at(-1)?.value;
+    expect(added.ok).toBe(true);
+    expect(added.value.elements[0].points).toHaveLength(3);
+    expect(screen.getByRole('combobox', { name: '当前对象' })).toHaveValue('polyline-1');
+    fireEvent.change(screen.getByRole('textbox', { name: '终点 Y（m）' }), { target: { value: '-220' } });
+    expect(dispatch.mock.results.at(-1)?.value.ok).toBe(false);
+    expect(screen.getByRole('alert')).toHaveTextContent('中心线长度必须大于');
+    fireEvent.change(screen.getByRole('textbox', { name: '终点 Y（m）' }), { target: { value: '-232' } });
+    expect(dispatch.mock.results.at(-1)?.value.ok).toBe(true);
+    expect(dispatch.mock.results.at(-1)?.value.value.elements[0].points).toHaveLength(3);
+    expect(FakeRenderer.active.size).toBe(1);
   });
 });

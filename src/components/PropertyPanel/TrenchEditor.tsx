@@ -3,20 +3,25 @@ import type { Project, Result, Trench } from '../../core/model/project';
 import { NumberFields } from './NumberFields';
 import type { NumberField } from './NumberFields';
 
+/** 首个节点叫起点、末个叫终点，中间节点按序号命名；节点增删属 M5 绘制交互。 */
+const nodeLabel = (index: number, last: number): string =>
+  index === 0 ? '起点' : index === last ? '终点' : `节点 ${index + 1}`;
+
 export function TrenchEditor({ trench, onUpdate }: { trench: Trench; onUpdate: (trench: Trench) => Result<Project> }): ReactElement {
-  // 当前阶段的校验保证基槽恰好有两个节点；这里的兜底只用于类型收窄。
-  const [first, second] = trench.points;
+  const last = trench.points.length - 1;
   const fields: NumberField[] = [
-    { key: 'x1', label: '起点 X（m）', value: first?.x ?? 0 }, { key: 'y1', label: '起点 Y（m）', value: first?.y ?? 0 },
-    { key: 'x2', label: '终点 X（m）', value: second?.x ?? 0 }, { key: 'y2', label: '终点 Y（m）', value: second?.y ?? 0 },
+    ...trench.points.flatMap((point, i) => [
+      { key: `x${i}`, label: `${nodeLabel(i, last)} X（m）`, value: point.x },
+      { key: `y${i}`, label: `${nodeLabel(i, last)} Y（m）`, value: point.y },
+    ]),
     { key: 'bottomWidth', label: '底宽（m）', value: trench.bottomWidth },
     { key: 'depth', label: '开挖深度（m）', value: trench.depth }, { key: 'slope', label: '放坡系数 m', value: trench.slope },
   ];
   return <div className="object-editor">
-    <h3>直线基槽参数</h3>
+    <h3>折线基槽参数</h3>
     <NumberFields fields={fields} apply={values => onUpdate({ ...trench,
       bottomWidth: values.bottomWidth!, depth: values.depth!, slope: values.slope!,
-      points: [{ x: values.x1!, y: values.y1! }, { x: values.x2!, y: values.y2! }] })} />
-    <p className="scope-note">端面垂直，不在中心线方向额外放坡；边坡水平外扩 = 深度 × 放坡系数。当前阶段仅支持两个节点，折线基槽在后续阶段实现。</p>
+      points: trench.points.map((_, i) => ({ x: values[`x${i}`]!, y: values[`y${i}`]! })) })} />
+    <p className="scope-note">{trench.points.length} 个节点、整槽统一截面；内部转角取相邻偏移线的 miter 交点，端面垂直，边坡水平外扩 = 深度 × 放坡系数。折返、自交、miter 比超过 4 或槽宽贴近自身都会被拒绝。</p>
   </div>;
 }

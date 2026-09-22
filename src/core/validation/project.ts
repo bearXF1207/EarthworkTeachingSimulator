@@ -1,4 +1,5 @@
 import { outline } from '../geometry/pitOutline';
+import { distanceToSegment, inside, segmentsTouch } from '../geometry/polygon';
 import { trenchOutlines } from '../geometry/trenchOutline';
 import type { ExcavationElement, Point2, Project, Result, ValidationIssue } from '../model/project';
 import { normalizeDegrees } from '../model/project';
@@ -6,26 +7,8 @@ import { EPSILON, MAX_COORDINATE, MAX_ELEMENTS, MAX_SIZE, MAX_SLOPE, MIN_SIZE, M
 import { validateTrench } from './trench';
 
 export { EPSILON } from './limits';
-
-export function distanceToSegment(p: Point2, a: Point2, b: Point2): number {
-  const dx = b.x - a.x, dy = b.y - a.y;
-  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
-  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
-}
-export function inside(p: Point2, ring: Point2[]): boolean {
-  let result = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const a = ring[i]!, b = ring[j]!;
-    if (distanceToSegment(p, a, b) <= EPSILON) return true;
-    if ((a.y > p.y) !== (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x) result = !result;
-  }
-  return result;
-}
-function segmentsTouch(a: Point2, b: Point2, c: Point2, d: Point2): boolean {
-  const cross = (p: Point2, q: Point2, r: Point2): number => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
-  return Math.min(distanceToSegment(a, c, d), distanceToSegment(b, c, d), distanceToSegment(c, a, b), distanceToSegment(d, a, b)) <= EPSILON ||
-    (cross(a, b, c) * cross(a, b, d) < 0 && cross(c, d, a) * cross(c, d, b) < 0);
-}
+// 平面谓词与几何模块共用一份实现，避免开口判定和轮廓校验出现两套容差。
+export { distanceToSegment, inside };
 
 type CircleOpening = { x: number; y: number; radius: number };
 /** 顶部开口：统一用逆时针轮廓描述边界，圆坑额外保留解析半径，避免漏过内接弦之外的细小重叠。 */
@@ -107,7 +90,7 @@ export function validateProject(input: unknown): Result<Project> {
         if (checked.ok) elements.push(checked.value); else issues.push(...checked.issues);
         return;
       }
-      if (!['square-pit', 'rect-pit', 'circular-pit'].includes(String(e.type))) { fail(`${path}.type`, '仅支持三类基坑与直线基槽'); return; }
+      if (!['square-pit', 'rect-pit', 'circular-pit'].includes(String(e.type))) { fail(`${path}.type`, '仅支持三类基坑与基槽'); return; }
       const position = record(e.position) ? {
         x: measure(e.position.x, `${path}.position.x`, -MAX_COORDINATE, MAX_COORDINATE),
         y: measure(e.position.y, `${path}.position.y`, -MAX_COORDINATE, MAX_COORDINATE),

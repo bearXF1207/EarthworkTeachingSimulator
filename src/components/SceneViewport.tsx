@@ -14,6 +14,10 @@ import { TrenchEditor } from './PropertyPanel/TrenchEditor';
 import { PIT_LABELS } from '../core/model/project';
 
 const TRENCH_LABEL = '直线基槽';
+const POLYLINE_LABEL = '折线基槽';
+/** 两个节点按直线基槽呈现，多节点按折线基槽呈现。 */
+const elementLabel = (element: ExcavationElement): string => element.type === 'trench'
+  ? (element.points.length === 2 ? TRENCH_LABEL : POLYLINE_LABEL) : PIT_LABELS[element.type];
 
 export function SceneViewport(): ReactElement {
   const host = useRef<HTMLDivElement>(null);
@@ -23,6 +27,7 @@ export function SceneViewport(): ReactElement {
   const [selected, setSelected] = useState('');
   const serial = useRef(0);
   const trenchSerial = useRef(0);
+  const polylineSerial = useRef(0);
   const [error, setError] = useState('');
   const [displayMode, setDisplayMode] = useState<DisplayMode>('solid');
   const [view, setView] = useState<ViewMode>('free');
@@ -61,12 +66,19 @@ export function SceneViewport(): ReactElement {
       type === 'rect-pit' ? { ...base, type, bottomLength: 6, bottomWidth: 4, rotation: 0 } : { ...base, type, bottomDiameter: 4 };
     if (dispatch({ type: 'add', element }).ok) setSelected(element.id);
   }
-  // M3 演示入口：在基坑演示行下方按 10m 间距放置 20m 长的直线基槽；正式绘制交互留给 M5。
+  // 演示入口：直线基槽按 10m 间距排在基坑演示行下方，90° 折线基槽再向下按 30m 间距排列；正式绘制交互留给 M5。
   function addTrench(): void {
     const index = trenchSerial.current++;
     const y = -20 - index * 10;
     const element: Trench = { id: `trench-${index + 1}`, type: 'trench', points: [{ x: -12, y }, { x: 8, y }],
       bottomWidth: 2, depth: 2, slope: .5 };
+    if (dispatch({ type: 'add', element }).ok) setSelected(element.id);
+  }
+  function addPolylineTrench(): void {
+    const index = polylineSerial.current++;
+    const y = -220 - index * 30;
+    const element: Trench = { id: `polyline-${index + 1}`, type: 'trench',
+      points: [{ x: -12, y }, { x: 8, y }, { x: 8, y: y - 12 }], bottomWidth: 2, depth: 2, slope: .5 };
     if (dispatch({ type: 'add', element }).ok) setSelected(element.id);
   }
   function update(element: ExcavationElement): Result<Project> { return dispatch({ type: 'update', element }, false); }
@@ -94,10 +106,11 @@ export function SceneViewport(): ReactElement {
     <h2>参数化开挖对象</h2>
     <div className="create-elements">
       <button disabled={!status.ready} onClick={addTrench}>添加{TRENCH_LABEL}</button>
+      <button disabled={!status.ready} onClick={addPolylineTrench}>添加{POLYLINE_LABEL}</button>
       {(Object.keys(PIT_LABELS) as Pit['type'][]).map(type =>
         <button key={type} disabled={!status.ready} onClick={() => add(type)}>添加{PIT_LABELS[type]}</button>)}</div>
     <label>当前对象<select aria-label="当前对象" value={selected} onChange={e => { setSelected(e.target.value); setError(''); }}>
-      <option value="">请选择对象</option>{project.elements.map(e => <option key={e.id} value={e.id}>{e.id} · {e.type === 'trench' ? TRENCH_LABEL : PIT_LABELS[e.type]}</option>)}
+      <option value="">请选择对象</option>{project.elements.map(e => <option key={e.id} value={e.id}>{e.id} · {elementLabel(e)}</option>)}
     </select></label>
     {active && <fieldset disabled={!status.ready}>
       {active.type === 'trench' ? <TrenchEditor key={active.id} trench={active} onUpdate={update} />
@@ -105,6 +118,6 @@ export function SceneViewport(): ReactElement {
       <button onClick={() => { if (dispatch({ type: 'delete', id: active.id }).ok) setSelected(''); }}>删除当前{active.type === 'trench' ? '基槽' : '基坑'}</button>
     </fieldset>}
     {error && <p role="alert" className="input-error">{error}</p>}
-    <p className="scope-note">M3 演示入口：按预设位置添加，再编辑参数。顶部开口禁止重叠、包含或相切。正式鼠标绘制、体积计算和文件保存尚未实现。</p>
+    <p className="scope-note">M4 演示入口：按预设位置添加直线/折线基槽与基坑，再编辑节点和截面参数。顶部开口禁止重叠、包含或相切；折返、自交与超出 miter 上限的转角会被拒绝。正式鼠标绘制、体积计算和文件保存尚未实现。</p>
   </aside></>;
 }

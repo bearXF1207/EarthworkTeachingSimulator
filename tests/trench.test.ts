@@ -109,9 +109,10 @@ describe('M3 基槽参数与冲突校验', () => {
   });
   it('拒绝节点数量、节点格式、坐标范围与非有限值', () => {
     const valid = { points: [{ x: 0, y: 0 }, { x: 20, y: 0 }], bottomWidth: 2, depth: 2, slope: .5 };
+    const tooMany = Array.from({ length: 201 }, (_, i) => ({ x: i * 2, y: 0 }));
     for (const input of [
       { ...valid, points: [] }, { ...valid, points: [{ x: 0, y: 0 }] },
-      { ...valid, points: [...valid.points, { x: 40, y: 0 }] },
+      { ...valid, points: tooMany }, // M4 起 2～200 节点合法，超出上限仍拒绝
       { ...valid, points: [{ x: 0, y: 0 }, { x: 20000, y: 0 }] },
       { ...valid, points: [{ x: 0, y: 0 }, [20, 0]] }, { ...valid, points: '0,0;20,0' },
       { ...valid, points: [{ x: 0, y: 0 }, { x: Number.NaN, y: 0 }] },
