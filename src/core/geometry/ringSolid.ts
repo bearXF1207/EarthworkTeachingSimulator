@@ -30,10 +30,13 @@ export function buildRingSolid(bottom: Point2[], top: Point2[], bottomZ: number,
   // 非索引几何的材质组按顶点序号划分。
   const bottomVertexCount = positions.length / 3;
   if (!bottomVertexCount) throw new Error('开挖底面三角化失败');
+  // 环由“左侧偏移 n 点 + 右侧偏移倒序 n 点”构成，端面不是 i=0/last：
+  //   起点端面 = 回绕边 ring[2n-1]→ring[0]；终点端面 = ring[n-1]→ring[n]。
+  // 索引取错会误删侧墙，在贯通处开洞并露出背景/地面背面（黑面）。
+  const nodeCount = bottom.length / 2;
   for (let i = 0; i < bottom.length; i++) {
-    // 端面：i=0 是回绕到首点的那条边（起点端面），i=n-1 是终点端面。
-    if (options.openStart && i === 0) continue;
-    if (options.openEnd && i === bottom.length - 1) continue;
+    if (options.openStart && i === bottom.length - 1) continue;
+    if (options.openEnd && i === nodeCount - 1) continue;
     const j = (i + 1) % bottom.length;
     const b = bottom[i]!, bn = bottom[j]!, t = top[i]!, tn = top[j]!;
     // 逆时针轮廓：这些面朝向开挖空腔，绕序与底面相反。
