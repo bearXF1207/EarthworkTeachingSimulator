@@ -331,6 +331,8 @@ M5 已通过。实现 Raycasting 选择、高亮、属性编辑、删除整对�
 
 ## 9. M7：土方量、结果显示与两点距离测量
 
+> 状态：**已通过（2026-09-23）**，结果见 [M7_REPORT.md](./M7_REPORT.md)。实现要点：`core/calculation/` 的 `measurement/trenchVolume/pitVolume/quantities` 纯函数、`QuantityView` 只读读数与合计、测量走 `DrawingManager` 草稿分支。
+
 ### 前置条件与范围
 
 M6 已通过。公式全部实现于 `core/calculation/`；UI 只选择数据并格式化。结果标记“预计土方量”，不宣称工程计价精度，不实现角度/高差测量。

@@ -10,7 +10,7 @@ export function App(): ReactElement {
           <p className="eyebrow">EARTHWORK · 教学实验室</p>
           <h1>土方开挖教学模拟器</h1>
         </div>
-        <span className="phase-badge">M5 · 俯视绘制</span>
+        <span className="phase-badge">M7 · 土方量</span>
       </header>
 
       <main>

@@ -57,6 +57,17 @@ button:disabled, select:disabled { opacity: .5; cursor: not-allowed; }
 .object-editor h3 { font-size: 16px; }
 fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .input-error { color: #ffc093; font-size: 13px; overflow-wrap: anywhere; }
+/* M7 测量标签：贴着当前点显示，不拦截指针事件。 */
+.measure-label { position: absolute; transform: translate(10px, -140%); padding: 3px 8px; border-radius: 4px; pointer-events: none;
+  background: #17231f; border: 1px solid #d4b979; color: #f0e3bd; font-size: 13px; white-space: nowrap; }
+/* M7 工程量读数：只读展示，单位与数值同行。 */
+.quantity-view { margin-top: 18px; }
+.quantity-view h3, .quantity-summary h3 { margin: 0 0 10px; font-size: 15px; }
+.quantity-list { display: grid; gap: 6px; margin: 0; font-size: 13px; }
+.quantity-list div { display: flex; justify-content: space-between; gap: 16px; }
+.quantity-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid #384b3d; color: #f0e3bd; }
+.quantity-summary { margin-top: 22px; padding-top: 16px; border-top: 1px solid #314138; font-size: 14px; }
+.quantity-summary strong { color: #f0e3bd; }
 @media (max-width: 800px) {
   .app-shell { padding: 24px; }
   .app-header { flex-wrap: wrap; }

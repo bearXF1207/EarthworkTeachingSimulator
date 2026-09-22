@@ -638,3 +638,70 @@ describe('M4 折线基槽界面', () => {
     expect(FakeRenderer.active.size).toBe(1);
   });
 });
+
+describe('M7 工程量与测量界面', () => {
+  it('基槽与基坑都显示预计土方量，合计只对已通过校验的对象求和', () => {
+    render(<App />);
+    const summary = (): HTMLElement => screen.getByRole('region', { name: '工程量合计' });
+    expect(summary()).toHaveTextContent('预计土方量合计 0.00 m³');
+    expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+    drawTrench([[0, 0], [20, 0]]); // B=2/H=2/m=.5 → A=6，V=120
+    expect(screen.getByText('直线基槽工程量')).toBeVisible();
+    expect(screen.getByText('120.00 m³')).toBeVisible();
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    expect(summary()).toHaveTextContent('预计土方量合计 120.00 m³');
+    // 基坑默认 4×4/H=2/m=.5 → 152/3≈50.67，合计 ≈170.67
+    fireEvent.click(screen.getByRole('button', { name: '放置基坑' }));
+    clickGround(-40, 0);
+    expect(screen.getByText('50.67 m³')).toBeVisible();
+    expect(screen.getByText(/2 个开挖对象/)).toBeVisible();
+    expect(summary()).toHaveTextContent('预计土方量合计 170.67 m³');
+  });
+
+  it('编辑参数后工程量随之更新，删除对象后合计归零', () => {
+    render(<App />);
+    drawTrench([[0, 0], [10, 0]]); // V=60
+    expect(screen.getByText('60.00 m³')).toBeVisible();
+    fireEvent.change(screen.getByRole('textbox', { name: '开挖深度（m）' }), { target: { value: '4' } });
+    // H=4/m=.5：T=6，A=16，V=160
+    expect(screen.getByText('160.00 m³')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '删除当前基槽' }));
+    expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+    expect(screen.getByRole('region', { name: '工程量合计' })).toHaveTextContent('预计土方量合计 0.00 m³');
+  });
+
+  it('测量工具：两点得到距离，重新测量与 Esc 都不改变工程数据', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '测量' }));
+    expect(screen.getByText(/请单击设置第一点/)).toBeVisible();
+    clickGround(0, 0);
+    expect(screen.getByText(/请单击设置第二点/)).toBeVisible();
+    clickGround(3, 4); // 网格吸附下仍是 (3,4)，距离 5m
+    expect(screen.getByText(/测量距离：5.00 m/)).toBeVisible();
+    // 画布标签也显示距离
+    expect(document.querySelector('.measure-label')?.textContent).toBe('5.00 m');
+    // 重新测量清空两点，再点一次即从新点开始
+    fireEvent.click(screen.getByRole('button', { name: '重新测量' }));
+    expect(screen.getByText(/请单击设置第一点/)).toBeVisible();
+    clickGround(0, 0); clickGround(6, 0);
+    expect(screen.getByText(/测量距离：6.00 m/)).toBeVisible();
+    expect(dispatch.mock.calls.every(call => (call[0] as { type: string }).type !== 'add')).toBe(true);
+    expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+    // Esc 取消：回到选择工具，标签与提示都清除
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByText(/测量距离/)).not.toBeInTheDocument();
+    expect(document.querySelector('.measure-label')).toBeNull();
+    expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+  });
+
+  it('测量不拦截选择：切回选择工具后仍能点选开挖对象', () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '测量' }));
+    clickGround(0, 30); clickGround(0, 40);
+    fireEvent.click(screen.getByRole('button', { name: '选择' }));
+    clickGround(10, 0);
+    expect(screen.getByText('直线基槽工程量')).toBeVisible();
+  });
+});

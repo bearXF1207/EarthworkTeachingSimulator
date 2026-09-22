@@ -20,6 +20,9 @@ import { ViewControls } from './ViewControls/ViewControls';
 import { DrawingPanel } from './DrawingPanel/DrawingPanel';
 import { PitEditor } from './PropertyPanel/PitEditor';
 import { TrenchEditor } from './PropertyPanel/TrenchEditor';
+import { QuantityView } from './PropertyPanel/QuantityView';
+import { distance } from '../core/calculation/measurement';
+import { totalVolume } from '../core/calculation/quantities';
 
 const TRENCH_LABEL = '直线基槽';
 const POLYLINE_LABEL = '折线基槽';
@@ -49,6 +52,7 @@ export function SceneViewport(): ReactElement {
   const [snap, setSnap] = useState(true);
   const [ortho, setOrtho] = useState(false);
   const [snapHint, setSnapHint] = useState('');
+  const [measureLabel, setMeasureLabel] = useState<{ x: number; y: number; text: string } | null>(null);
   const snapTargets = useRef<SnapTarget[]>([]);
   const [generation, setGeneration] = useState(0);
   const [status, setStatus] = useState<SceneStatus>({ ready: false, message: '正在初始化场景…' });
@@ -87,7 +91,7 @@ export function SceneViewport(): ReactElement {
     return result;
   }
   const failure = (result: Result<Project>): string => result.ok ? '' : result.issues.map(i => `${i.path}：${i.message}`).join('；');
-  const toolActive = draw.kind === 'drawTrench' || draw.kind === 'placePit';
+  const toolActive = draw.kind === 'drawTrench' || draw.kind === 'placePit' || draw.kind === 'measure';
 
   function changeView(next: ViewMode): void { manager.current?.setView(next); setView(next); }
   function restoreView(): void { if (view !== viewBeforeTool.current) changeView(viewBeforeTool.current); }
@@ -118,10 +122,11 @@ export function SceneViewport(): ReactElement {
     return resolveSnap(raw, [...closure, ...snapTargets.current], { grid: snap, spacing, lock });
   }
 
-  /** 预览只显示未提交草稿：基槽为中心线，基坑为槽顶轮廓。 */
+  /** 预览只显示未提交草稿：基槽为中心线，基坑为槽顶轮廓，测量为两点连线。 */
   function refreshPreview(state: DrawingState, cursor: Point2 | null): void {
     const instance = manager.current;
     if (!instance) return;
+    if (state.kind === 'measure') { instance.setPreviewPoints(drawing.previewPoints()); return; }
     if (state.kind === 'drawTrench') { instance.setPreviewPoints(drawing.previewPoints()); return; }
     if (state.kind === 'placePit' && cursor) {
       try {
@@ -131,6 +136,26 @@ export function SceneViewport(): ReactElement {
       return;
     }
     instance.setPreviewPoints([]);
+  }
+
+  /**
+   * 测量标签：贴在第二个点旁显示距离，坐标相对画布宿主。
+   * 结果只用于现场提示，不进入工程数据、历史或文件。
+   */
+  function updateMeasureLabel(value: number | null, event: { clientX: number; clientY: number }): void {
+    const rect = host.current?.getBoundingClientRect();
+    if (value === null || !rect) { setMeasureLabel(null); return; }
+    setMeasureLabel({ x: event.clientX - rect.left, y: event.clientY - rect.top, text: `${value.toFixed(2)} m` });
+  }
+  /** 当前测量距离：两点齐全为最终结果，只有一个点时随光标给出实时距离。 */
+  function measureValue(points: Point2[], cursor: Point2 | null): number | null {
+    if (points.length >= 2) return distance(points[0]!, points[1]!);
+    return points.length === 1 && cursor ? distance(points[0]!, cursor) : null;
+  }
+  function resetMeasure(): void {
+    setDraw(drawing.resetMeasure());
+    setMeasureLabel(null);
+    manager.current?.setPreviewPoints([]);
   }
 
   /** 拖动编辑：记录对象、节点与起始屏幕坐标，超过 3 CSS 像素才真正开始。 */
@@ -221,6 +246,7 @@ export function SceneViewport(): ReactElement {
     const next = drawing.moveCursor(point);
     setDraw(next);
     refreshPreview(next, point);
+    if (next.kind === 'measure') updateMeasureLabel(measureValue(next.points, point), event);
   }
   function onClick(event: ReactMouseEvent<HTMLDivElement>): void {
     const down = pointerDown.current; pointerDown.current = null;
@@ -233,6 +259,14 @@ export function SceneViewport(): ReactElement {
     }
     const resolved = draftPoint(event, state);
     if (!resolved) return;
+    if (state.kind === 'measure') {
+      // 前两点定一次测量；再点一下即从该点重新开始，历史与工程数据不受影响。
+      const next = drawing.addMeasurePoint(resolved.point);
+      setDraw(next);
+      refreshPreview(next, null);
+      updateMeasureLabel(next.kind === 'measure' ? measureValue(next.points, null) : null, event);
+      return;
+    }
     if (state.kind === 'drawTrench') {
       const { state: next, added } = drawing.addNode(resolved.point, event.detail);
       setDraw(next);
@@ -267,14 +301,13 @@ export function SceneViewport(): ReactElement {
   }
   function cancelDrawing(): void {
     setDraw(drawing.cancel());
-    setDrawMessage(''); setSnapHint('');
+    setDrawMessage(''); setSnapHint(''); setMeasureLabel(null);
     manager.current?.setPreviewPoints([]);
     restoreView();
   }
   function changeTool(kind: ToolKind): void {
-    if (kind === 'measure') return;
     setDraw(drawing.setTool(kind));
-    setDrawMessage(''); setError(''); setSnapHint('');
+    setDrawMessage(''); setError(''); setSnapHint(''); setMeasureLabel(null);
     manager.current?.setPreviewPoints([]);
     if (kind === 'select') restoreView();
     else { viewBeforeTool.current = view; changeView('top'); }
@@ -335,7 +368,9 @@ export function SceneViewport(): ReactElement {
   return <><section className="scene-panel" aria-label="基础三维场景">
     <div className="scene-heading"><h2>施工场地</h2><span>{VIEW_LABELS[view]} · {project.elements.length} 个开挖对象 · 场地自动扩展</span></div>
     <div className="viewport" ref={host} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onClick={onClick} onDoubleClick={onDoubleClick}
-      style={toolActive ? { cursor: 'crosshair' } : undefined} />
+      style={toolActive ? { cursor: 'crosshair' } : undefined}>
+      {measureLabel && <span className="measure-label" style={{ left: measureLabel.x, top: measureLabel.y }}>{measureLabel.text}</span>}
+    </div>
     <div className="scene-status" role={status.ready ? 'status' : 'alert'}>{status.message}</div>
     <ViewControls view={view} grid={grid} snap={snap} ready={status.ready} viewLocked={toolActive}
       onView={changeView} onGrid={changeGrid} onSnap={changeSnap} onReset={() => manager.current?.resetCamera()}
@@ -346,7 +381,8 @@ export function SceneViewport(): ReactElement {
     <h2>绘制与参数</h2>
     <DrawingPanel state={draw} ready={status.ready} message={drawMessage} section={section} pit={pit}
       ortho={ortho} onOrtho={setOrtho} hint={snapHint}
-      onTool={changeTool} onSection={setSection} onPit={setPit} onAdvance={advance} onFinish={finishTrench} onCancel={cancelDrawing} />
+      onTool={changeTool} onSection={setSection} onPit={setPit} onAdvance={advance} onFinish={finishTrench} onCancel={cancelDrawing}
+      onResetMeasure={resetMeasure} />
     <label>当前对象<select aria-label="当前对象" value={selected} onChange={e => { setSelected(e.target.value); setError(''); }}>
       <option value="">请选择对象</option>{project.elements.map(e => <option key={e.id} value={e.id}>{e.id} · {elementLabel(e)}</option>)}
     </select></label>
@@ -355,7 +391,13 @@ export function SceneViewport(): ReactElement {
         : <PitEditor key={active.id} pit={active} onUpdate={update} />}
       <button onClick={() => { if (dispatch({ type: 'delete', id: active.id }).ok) setSelected(''); }}>删除当前{active.type === 'trench' ? '基槽' : '基坑'}</button>
     </fieldset>}
+    {active && <QuantityView key={`q-${active.id}`} element={active} title={elementLabel(active)} />}
+    <section className="quantity-summary" aria-label="工程量合计">
+      <h3>工程量合计</h3>
+      <p><strong>预计土方量合计 {totalVolume(project.elements).toFixed(2)} m³</strong></p>
+      <p className="scope-note">只对已通过校验的对象求和；草稿与临时测量不计入，也不合并相交开挖的工程量。</p>
+    </section>
     {error && <p role="alert" className="input-error">{error}</p>}
-    <p className="scope-note">M6：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑，画布点选与拖动编辑；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。土方量计算与文件保存尚未实现。</p>
+    <p className="scope-note">M7：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑，画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。预计土方量按解析公式计算，文件保存与撤销历史尚未实现。</p>
   </aside></>;
 }

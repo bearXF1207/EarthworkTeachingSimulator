@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ReactElement } from 'react';
 import { polylineReport } from '../../core/geometry/pointMath';
+import { distance } from '../../core/calculation/measurement';
 import { isClosedRing } from '../../core/geometry/trenchOutline';
 import type { PitDraftParams, TrenchSection } from '../../core/model/project';
 import { PIT_LABELS } from '../../core/model/project';
@@ -8,7 +9,7 @@ import type { DrawingState, ToolKind } from '../../scene/DrawingManager';
 import { NumberFields } from '../PropertyPanel/NumberFields';
 import type { NumberField } from '../PropertyPanel/NumberFields';
 
-const TOOL_LABELS: Record<ToolKind, string> = { select: '选择', drawTrench: '绘制基槽', placePit: '放置基坑', measure: '测量（后续阶段）' };
+const TOOL_LABELS: Record<ToolKind, string> = { select: '选择', drawTrench: '绘制基槽', placePit: '放置基坑', measure: '测量' };
 const format = (value: number, digits: number): string => value.toFixed(digits);
 
 /** 长度与角度输入：Enter 或按钮提交一段，结果不做网格吸附。 */
@@ -41,10 +42,11 @@ type Props = {
   onTool: (kind: ToolKind) => void; onSection: (section: TrenchSection) => void; onPit: (pit: PitDraftParams) => void;
   onOrtho: (enabled: boolean) => void;
   onAdvance: (length: number, angle: number) => void; onFinish: () => void; onCancel: () => void;
+  onResetMeasure: () => void;
 };
 
 /** M5 绘制面板：工具切换、草稿读数与精确输入、基坑放置参数、正交模式与吸附提示。草稿不进入项目数据。 */
-export function DrawingPanel({ state, ready, message, hint, section, pit, ortho, onTool, onSection, onPit, onOrtho, onAdvance, onFinish, onCancel }: Props): ReactElement {
+export function DrawingPanel({ state, ready, message, hint, section, pit, ortho, onTool, onSection, onPit, onOrtho, onAdvance, onFinish, onCancel, onResetMeasure }: Props): ReactElement {
   const nodes = state.kind === 'drawTrench' ? state.nodes : [];
   // 末点回到首点即为首尾闭合：确认后按环形基槽生成，内圈包围的岛保持地面。
   const closed = isClosedRing(nodes);
@@ -52,6 +54,11 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
   const cursor = state.kind === 'drawTrench' ? state.cursor : null;
   const last = nodes[nodes.length - 1];
   const rubber = last && cursor ? polylineReport([last, cursor])[0] : undefined;
+  // 测量读数：两点齐全是最终结果；只有起点时随光标给出实时距离。读数不进入工程数据。
+  const measureDistance = state.kind === 'measure'
+    ? state.points.length >= 2 ? distance(state.points[0]!, state.points[1]!)
+      : state.points.length === 1 && state.cursor ? distance(state.points[0]!, state.cursor) : null
+    : null;
   // 标签带“新建”前缀，与已创建对象的属性标签区分，避免同名输入框歧义。
   const sectionFields: NumberField[] = [
     { key: 'bottomWidth', label: '新建基槽底宽（m）', value: section.bottomWidth },
@@ -67,7 +74,7 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
   return <section className="draw-panel" aria-label="绘制工具">
     <div className="create-elements" role="group" aria-label="工具">
       {(Object.keys(TOOL_LABELS) as ToolKind[]).map(kind =>
-        <button key={kind} disabled={!ready || kind === 'measure'} aria-pressed={state.kind === kind}
+        <button key={kind} disabled={!ready} aria-pressed={state.kind === kind}
           onClick={() => onTool(kind)}>{TOOL_LABELS[kind]}</button>)}
     </div>
     {message && <p role="alert" className="input-error">{message}</p>}
@@ -92,6 +99,14 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
         <button disabled={!ready || !nodes.length} onClick={onFinish}>完成基槽（Enter）</button>
         <button onClick={onCancel}>取消绘制（Esc）</button>
       </div>
+    </div>}
+    {state.kind === 'measure' && <div className="draw-draft">
+      <p className="scope-note">测量：在俯视场地单击设置第一点，再单击设置第二点；画布上显示连线与距离，面板同步显示读数。再点一次即从该点重新测量，Esc 取消。测量结果不进入工程数据。</p>
+      {measureDistance !== null
+        ? <p>测量距离：{format(measureDistance, 2)} m</p>
+        : <p>测量距离：{state.points.length === 1 ? '请单击设置第二点' : '请单击设置第一点'}</p>}
+      {state.points.length > 0 && <div className="create-elements"><button onClick={onResetMeasure}>重新测量</button>
+        <button onClick={onCancel}>取消测量（Esc）</button></div>}
     </div>}
     {state.kind === 'placePit' && <div className="draw-draft">
       <label>基坑类型<select aria-label="基坑类型" value={pit.type} onChange={e => onPit({ ...pit, type: e.target.value as PitDraftParams['type'] })}>
