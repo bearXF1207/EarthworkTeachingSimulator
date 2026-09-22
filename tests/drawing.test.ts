@@ -29,6 +29,14 @@ describe('M5 吸附、精确输入与读数', () => {
     expect(second.x).toBeCloseTo(10.8253175473, 9); expect(second.y).toBeCloseTo(6.25, 9);
     expect(Math.hypot(second.x, second.y)).toBeCloseTo(12.5, 12);
   });
+  it('轴上方向的下一段坐标精确，不带浮点噪声', () => {
+    // cos(90°)=6.1e-17、cos(270°)=-1.8e-16：取整后必须是精确的 0 与 ±1
+    expect(nextPoint(p(1, 2), 8, 90)).toEqual({ x: 1, y: 10 });
+    expect(nextPoint(p(0, 0), 20, 270)).toEqual({ x: 0, y: -20 });
+    expect(nextPoint(p(0, 0), 12.5, 180)).toEqual({ x: -12.5, y: 0 });
+    expect(nextPoint(p(3, 4), 5, 0)).toEqual({ x: 8, y: 4 });
+    expect(nextPoint(p(0, 0), 20, 360)).toEqual({ x: 20, y: 0 });
+  });
   it('角度 -90、450 与 360 正规化', () => {
     expect(normalizeDegrees(-90)).toBe(270);
     expect(normalizeDegrees(450)).toBe(90);
@@ -166,6 +174,19 @@ describe('M5 相邻基槽吸附', () => {
     const corner = resolveSnap(p(10.2, 2.1), targets);
     expect(corner.kind).toBe('boundary-corner');
     expect(corner.point).toEqual(p(10, 2));
+  });
+  it('靠近相邻基槽端部时优先吸附端点，避免中心线吸附导致内部交叠', () => {
+    const nearEnd = resolveSnap(p(9.5, 0), targets);
+    expect(nearEnd.kind).toBe('node');
+    expect(nearEnd.point).toEqual(p(10, 0));
+    const nearStart = resolveSnap(p(0.6, 0), targets);
+    expect(nearStart.kind).toBe('node');
+    expect(nearStart.point).toEqual(p(0, 0));
+    const along = resolveSnap(p(5, 0), targets);
+    expect(along.kind).toBe('centerline');
+    expect(along.point).toEqual(p(5, 0));
+    const offset = resolveSnap(p(5, 0.6), targets);
+    expect(offset.kind).toBe('centerline');
   });
   it('超出半径回到 1m 网格，关闭吸附时保留原始坐标', () => {
     const far = resolveSnap(p(30.2, 30.7), targets);

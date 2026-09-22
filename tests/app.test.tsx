@@ -462,6 +462,67 @@ describe('M5 俯视绘制与放置', () => {
     expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
   });
 
+  it('双击终点即可确认，重复 Enter 不再创建第二个对象', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(0, 0); clickGround(10, 0);
+    fireEvent.doubleClick(canvasElement(), groundClient(10, 0));
+    expect(dispatch.mock.results).toHaveLength(1);
+    expect(dispatch.mock.results[0]?.value.ok).toBe(true);
+    expect(dispatch.mock.results[0]?.value.value.elements[0].points).toHaveLength(2);
+    // 完成即回到选择工具：再按 Enter 不应再产生任何命令或提示
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(dispatch.mock.results).toHaveLength(1);
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('输入框内普通 Enter 只提交本段，Ctrl+Enter 完成整槽', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(0, 0); clickGround(10, 0);
+    const length = screen.getByRole('textbox', { name: '本段长度（m）' });
+    fireEvent.keyDown(length, { key: 'Enter' });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(screen.getByText(/已设置 3 个节点/)).toBeVisible();
+    fireEvent.keyDown(length, { key: 'Enter', ctrlKey: true });
+    expect(dispatch.mock.results).toHaveLength(1);
+    const added = dispatch.mock.results[0]?.value;
+    expect(added.ok).toBe(true);
+    expect(added.value.elements[0].points).toHaveLength(3);
+    expect(added.value.elements[0].points[2]).toEqual({ x: 20, y: 0 });
+  });
+
+  it('验收流程：吸附闭合后双击与 Enter 都能确认', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    // 第二段起点吸附到第一段的端点，再双击终点确认
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(19.9, 0.2);
+    expect(screen.getByText(/当前吸附：吸附到 .* 端点/)).toBeVisible();
+    clickGround(40, 0);
+    fireEvent.doubleClick(canvasElement(), groundClient(40, 0));
+    const closed = dispatch.mock.results.at(-1)?.value;
+    expect(closed.ok).toBe(true);
+    expect(closed.value.elements).toHaveLength(2);
+    expect(closed.value.elements[1].points[0]).toEqual({ x: 20, y: 0 });
+    // 第三段继续同向延伸，改用 Enter 确认，验证两种确认方式都能在闭合位置生效
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    fireEvent.pointerMove(canvasElement(), groundClient(40, 0.1));
+    expect(screen.getByText(/当前吸附：吸附到 .* 端点/)).toBeVisible();
+    clickGround(40, 0.1);
+    clickGround(60, 0);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const extended = dispatch.mock.results.at(-1)?.value;
+    expect(extended.ok).toBe(true);
+    expect(extended.value.elements).toHaveLength(3);
+    expect(extended.value.elements[2].points).toEqual([{ x: 40, y: 0 }, { x: 60, y: 0 }]);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('三种基坑都能放置，重叠时拒绝并保持工具与既有模型', () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);

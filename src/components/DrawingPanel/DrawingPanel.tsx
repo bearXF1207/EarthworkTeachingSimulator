@@ -20,8 +20,9 @@ function SegmentForm({ disabled, onAdvance }: { disabled: boolean; onAdvance: (l
     }
     setError(''); onAdvance(parsedLength, parsedAngle);
   };
+  // 普通 Enter 提交本段；Ctrl/Cmd+Enter 留给全局的“完成基槽”。
   const keyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key === 'Enter') { event.preventDefault(); submit(); }
+    if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) { event.preventDefault(); submit(); }
   };
   return <div className="segment-form">
     <label>本段长度（m）<input aria-label="本段长度（m）" type="text" inputMode="decimal" value={length}
@@ -66,12 +67,14 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
         <button key={kind} disabled={!ready || kind === 'measure'} aria-pressed={state.kind === kind}
           onClick={() => onTool(kind)}>{TOOL_LABELS[kind]}</button>)}
     </div>
+    {message && <p role="alert" className="input-error">{message}</p>}
     {state.kind === 'drawTrench' && <div className="draw-draft">
-      <p className="scope-note">已设置 {nodes.length} 个节点：在俯视场地单击添加，双击或 Enter 完成，Esc 取消。绘制期间锁定视角。</p>
+      <p className="scope-note">已设置 {nodes.length} 个节点：在俯视场地单击添加。确认方式：双击终点、Enter（输入框内用 Ctrl/Cmd+Enter）或“完成基槽”按钮；Esc 取消。绘制期间锁定视角。</p>
       <label><input type="checkbox" checked={ortho} onChange={event => onOrtho(event.target.checked)} />正交模式（仅水平/竖直）</label>
       <p className="scope-note">中心线会吸附到相邻基槽的端点、中心线与槽顶边界，可用端点对接、共边贴合或围合成封闭区域；基槽之间只允许边界接触。正交模式只约束鼠标绘制，长度/角度输入仍按输入值。</p>
       {segments.map((segment, index) =>
         <p key={index}>第 {index + 1} 段：{format(segment.length, 2)}m · 方位角 {format(segment.angle, 1)}°</p>)}
+      {last && <p>当前点：({format(last.x, 2)}, {format(last.y, 2)})</p>}
       {rubber && <p>当前段：{format(rubber.length, 2)}m · 方位角 {format(rubber.angle, 1)}°</p>}
       {hint && <p className="scope-note">当前吸附：{hint}</p>}
       <SegmentForm disabled={!ready || !nodes.length} onAdvance={onAdvance} />
@@ -102,6 +105,5 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
       <p className="scope-note">在俯视场地单击放置；与既有开口重叠、包含或相切会被拒绝并保持当前工具。</p>
       <div className="create-elements"><button onClick={onCancel}>取消放置（Esc）</button></div>
     </div>}
-    {message && <p role="alert" className="input-error">{message}</p>}
   </section>;
 }

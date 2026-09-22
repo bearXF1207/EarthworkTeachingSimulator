@@ -138,7 +138,7 @@ export function validateProject(input: unknown): Result<Project> {
       const other = elements[j]!;
       if (!openingsConflict(element, other)) continue;
       fail(`elements[${i}]`, element.type === 'trench' && other.type === 'trench'
-        ? `顶部开口与 ${other.id} 内部交叠（基槽之间只允许边界接触；转角相接请并入同一条折线基槽，T 形分叉暂不支持）`
+        ? `顶部开口与 ${other.id} 内部交叠（基槽之间只允许边界接触：端点相接请吸附到对方端点，贴边请用贴合线；转角相接请并入同一条折线基槽，T 形分叉暂不支持）`
         : `顶部开口与 ${other.id} 重叠、包含或相切`);
     }
   });

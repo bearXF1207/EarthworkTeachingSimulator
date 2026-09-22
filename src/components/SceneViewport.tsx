@@ -88,17 +88,24 @@ export function SceneViewport(): ReactElement {
   function restoreView(): void { if (view !== viewBeforeTool.current) changeView(viewBeforeTool.current); }
 
   /**
+   * 工具状态一律从状态机实时读取：确认、取消与落点都在同一帧内也能拿到最新草稿，
+   * 不再依赖渲染闭包里的快照（否则紧接在同一次点击后的 Enter/双击会读到旧节点）。
+   */
+  const liveState = (): DrawingState => drawing.getState();
+
+  /**
    * 绘制点解析：投影到地面 → 正交约束（仅鼠标绘制）→ 相邻基槽吸附 → 1m 网格兜底。
    * 只有俯视用于绘制，画布外返回 null；基坑放置只做网格吸附。
    */
-  function draftPoint(event: { clientX: number; clientY: number }): SnapResolution | null {
+  function draftPoint(event: { clientX: number; clientY: number }, state: DrawingState): SnapResolution | null {
     const instance = manager.current;
-    if (!instance || view !== 'top') return null;
+    // 视角也读相机实时模式：刚切进绘制工具就落点时，渲染状态可能还没更新。
+    if (!instance || instance.cameras.mode !== 'top') return null;
     const ground = groundPointFromPointer(event.clientX, event.clientY, instance.cameras.active, instance.domElement.getBoundingClientRect());
     if (!ground) return null;
     const spacing = store.getSnapshot().settings.snapSpacing;
-    if (draw.kind !== 'drawTrench') return { point: snapPoint(ground, snap, spacing), kind: 'grid', sourceId: null };
-    const last = draw.nodes[draw.nodes.length - 1];
+    if (state.kind !== 'drawTrench') return { point: snapPoint(ground, snap, spacing), kind: 'grid', sourceId: null };
+    const last = state.nodes[state.nodes.length - 1];
     const lock = ortho && last ? orthoLock(last, ground) : null;
     const raw = lock ? applyLock(lock, ground) : ground;
     return resolveSnap(raw, snapTargets.current, { grid: snap, spacing, lock });
@@ -124,9 +131,10 @@ export function SceneViewport(): ReactElement {
   }
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
     if (!toolActive) return;
-    const resolved = draftPoint(event);
+    const state = liveState();
+    const resolved = draftPoint(event, state);
     const point = resolved?.point ?? null;
-    setSnapHint(draw.kind === 'drawTrench' && resolved ? snapLabel(resolved) : '');
+    setSnapHint(state.kind === 'drawTrench' && resolved ? snapLabel(resolved) : '');
     const next = drawing.moveCursor(point);
     setDraw(next);
     refreshPreview(next, point);
@@ -134,25 +142,30 @@ export function SceneViewport(): ReactElement {
   function onClick(event: ReactMouseEvent<HTMLDivElement>): void {
     const down = pointerDown.current; pointerDown.current = null;
     if (down && isDragGesture(down, { x: event.clientX, y: event.clientY })) return;
-    const resolved = draftPoint(event);
+    const state = liveState();
+    const resolved = draftPoint(event, state);
     if (!resolved) return;
-    if (draw.kind === 'drawTrench') {
-      const { state, added } = drawing.addNode(resolved.point, event.detail);
-      setDraw(state);
+    if (state.kind === 'drawTrench') {
+      const { state: next, added } = drawing.addNode(resolved.point, event.detail);
+      setDraw(next);
       setSnapHint(snapLabel(resolved));
       if (added) setDrawMessage('');
-      refreshPreview(state, state.kind === 'drawTrench' ? state.cursor : null);
+      refreshPreview(next, next.kind === 'drawTrench' ? next.cursor : null);
       return;
     }
-    if (draw.kind === 'placePit') placePit(resolved.point);
+    if (state.kind === 'placePit') placePit(resolved.point);
   }
-  function onDoubleClick(): void { if (draw.kind === 'drawTrench') finishTrench(); }
+  function onDoubleClick(): void { if (liveState().kind === 'drawTrench') finishTrench(); }
 
-  /** 双击、Enter 与“完成基槽”按钮共用同一个校验/提交入口。 */
+  /**
+   * 双击、Enter、Ctrl/Cmd+Enter 与“完成基槽”按钮共用同一个校验/提交入口。
+   * 成功时整槽只提交一次；失败保留可修改草稿并显示原因。重复触发自然成为空操作。
+   */
   function finishTrench(): void {
-    if (draw.kind !== 'drawTrench') return;
-    if (draw.nodes.length < 2) { setDrawMessage('至少需要两个节点才能完成基槽'); return; }
-    const element = trenchFromDraft(crypto.randomUUID(), draw.nodes, section);
+    const state = liveState();
+    if (state.kind !== 'drawTrench') return;
+    if (state.nodes.length < 2) { setDrawMessage('至少需要两个节点才能完成基槽'); return; }
+    const element = trenchFromDraft(crypto.randomUUID(), state.nodes, section);
     // 失败原因显示在绘制面板，避免与属性面板的错误提示重复。
     const result = dispatch({ type: 'add', element }, false);
     if (!result.ok) { setDrawMessage(failure(result)); return; }
@@ -177,8 +190,9 @@ export function SceneViewport(): ReactElement {
   }
   /** 精确输入推算下一点：绝对方位角、不执行网格吸附。 */
   function advance(length: number, angle: number): void {
-    if (draw.kind !== 'drawTrench') return;
-    const last = draw.nodes[draw.nodes.length - 1];
+    const current = liveState();
+    if (current.kind !== 'drawTrench') return;
+    const last = current.nodes[current.nodes.length - 1];
     if (!last) { setDrawMessage('请先在俯视图单击设置起点'); return; }
     const { state } = drawing.addNode(nextPoint(last, length, angle), 1);
     setDraw(state); setDrawMessage('');
@@ -197,8 +211,16 @@ export function SceneViewport(): ReactElement {
   shortcuts.current = { finish: finishTrench, cancel: cancelDrawing };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
-      // 文本输入、下拉、可编辑区域与输入法组合状态中的按键不触发场景命令。
-      if (isTextEntryTarget(event.target) || event.isComposing || event.keyCode === 229) return;
+      // 输入法组合状态中的按键一律不触发场景命令。
+      if (event.isComposing || event.keyCode === 229) return;
+      // Ctrl/Cmd+Enter 在任意焦点下都完成整槽：即使焦点还在长度/角度输入框里也能确认。
+      if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        shortcuts.current.finish();
+        return;
+      }
+      // 文本输入、下拉与可编辑区域内的按键不触发场景命令（输入框内 Enter 只提交本段）。
+      if (isTextEntryTarget(event.target)) return;
       if (event.key === 'Enter') shortcuts.current.finish();
       else if (event.key === 'Escape') shortcuts.current.cancel();
     };

@@ -36,30 +36,41 @@ export function strictlyInside(p: Point2, ring: Point2[], tolerance = TOUCH_TOLE
   return inside(p, ring);
 }
 
-/** 两条线段是否真交叉：交点不在端点、不共线。用于区分“边界接触”与“内部交叠”。 */
+/**
+ * 两条线段是否存在量级可观的真交叉：交点不在端点、不共线。
+ * 叉积必须超过与线段长度同量级的容差才算交叉——否则“精确相切”的两条边
+ * 会因为 cos(270°) 之类的浮点噪声（约 1e-16）被判成交叉，闭合连接会被误判为内部交叠。
+ */
 export function properCrossing(a: Point2, b: Point2, c: Point2, d: Point2): boolean {
   const cross = (p: Point2, q: Point2, r: Point2): number => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
   const first = cross(a, b, c), second = cross(a, b, d), third = cross(c, d, a), fourth = cross(c, d, b);
-  return ((first > 0 && second < 0) || (first < 0 && second > 0)) && ((third > 0 && fourth < 0) || (third < 0 && fourth > 0));
+  const tolerance = TOUCH_TOLERANCE * (Math.hypot(b.x - a.x, b.y - a.y) + Math.hypot(d.x - c.x, d.y - c.y));
+  return ((first > tolerance && second < -tolerance) || (first < -tolerance && second > tolerance)) &&
+    ((third > tolerance && fourth < -tolerance) || (third < -tolerance && fourth > tolerance));
 }
 
-/** 沿边向内侧的采样距离（米）：远大于接触容差，又足够小以贴近真实边界。 */
-const OVERLAP_PROBE = 1e-3;
+/**
+ * 沿边向内侧的采样距离（米）：多档取值，避免“交叠厚度恰好等于采样步长”的条带被漏判。
+ * 都远大于接触容差，因此贴着边界的接触点不会被当成内部点。
+ */
+const OVERLAP_PROBES = [1e-3, 1e-4];
 
 /**
- * 沿逆时针环的每条边取内侧采样点，检查是否落在另一个环内部。
- * 共边同侧的矩形交叠（顶点都落在对方边界上）只能靠这种采样识别。
+ * 沿逆时针环的每条边取多档内侧采样点，检查是否落在另一个环内部。
+ * 共边同侧的矩形或条带交叠（顶点都落在对方边界上、边又相互平行）只能靠这种采样识别。
  */
 function edgeProbesInside(ring: Point2[], other: Point2[]): boolean {
   for (let i = 0; i < ring.length; i++) {
     const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
     const dx = b.x - a.x, dy = b.y - a.y, length = Math.hypot(dx, dy);
     if (!(length > 0)) continue;
-    const step = Math.min(OVERLAP_PROBE, length / 8);
     const inward = { x: -dy / length, y: dx / length }; // 逆时针环的内侧在前进方向左边
-    for (const t of [0.1, 0.3, 0.5, 0.7, 0.9]) {
-      const probe = { x: a.x + dx * t + inward.x * step, y: a.y + dy * t + inward.y * step };
-      if (inside(probe, ring) && strictlyInside(probe, other)) return true;
+    for (const step of OVERLAP_PROBES) {
+      const inset = Math.min(step, length / 8);
+      for (const t of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+        const probe = { x: a.x + dx * t + inward.x * inset, y: a.y + dy * t + inward.y * inset };
+        if (inside(probe, ring) && strictlyInside(probe, other)) return true;
+      }
     }
   }
   return false;

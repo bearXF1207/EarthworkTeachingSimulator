@@ -19,12 +19,28 @@ export function snapPoint(point: Point2, enabled: boolean, spacing = 1): Point2 
 }
 
 /**
+ * 只把“落在轴上的方向分量”归整为精确的 0 与 ±1，其余分量原样保留。
+ * 否则 cos(270°) = -1.8e-16 会让“精确相切”的闭合连接带上微小交叠，
+ * 既可能被接触判定误判，也会让地面三角化出现退化碎片。
+ * 非轴向分量不做取整，用户输入的长度因此保持精确。
+ */
+const tidyDirection = (value: number): number => {
+  if (Math.abs(value) < 1e-12) return 0;
+  if (Math.abs(value - 1) < 1e-12) return 1;
+  if (Math.abs(value + 1) < 1e-12) return -1;
+  return value;
+};
+
+/**
  * 按绝对方位角推算下一点：`q = (p.x + L·cosθ, p.y + L·sinθ)`，θ 为度、逆时针为正。
  * 结果不做网格吸附，避免改变用户输入的长度。
  */
 export function nextPoint(from: Point2, length: number, angleDegrees: number): Point2 {
   const radians = normalizeDegrees(angleDegrees) * Math.PI / 180;
-  return { x: from.x + length * Math.cos(radians), y: from.y + length * Math.sin(radians) };
+  return {
+    x: from.x + length * tidyDirection(Math.cos(radians)),
+    y: from.y + length * tidyDirection(Math.sin(radians)),
+  };
 }
 
 export type SegmentReport = { length: number; angle: number };

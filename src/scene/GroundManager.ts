@@ -1,6 +1,9 @@
 import { AxesHelper, BufferGeometry, DoubleSide, Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Mesh, MeshStandardMaterial, ShapeUtils, Vector2 } from 'three';
 import type { Point2 } from '../core/model/project';
 
+/** 视作退化的地面三角形面积上限（m²）：亚微米级碎片不计入面积，也不生成面片。 */
+const DEGENERATE_GROUND_AREA = 1e-9;
+
 export class GroundManager {
   readonly root = new Group();
   readonly ground: Mesh<BufferGeometry, MeshStandardMaterial>;
@@ -23,7 +26,10 @@ export class GroundManager {
     for (const triangle of triangles) {
       const vertices = triangle.map(index => points[index]!);
       const area = Math.abs(ShapeUtils.area(vertices));
-      if (!Number.isFinite(area) || area <= 0) throw new Error('Invalid ground triangle');
+      if (!Number.isFinite(area)) throw new Error('Invalid ground triangle');
+      // 孔洞共边或近乎相切时 earcut 会产出面积趋于 0 的碎片三角形，按退化处理跳过；
+      // 真正的三角化错误仍由下面的总面积守卫拦下。
+      if (area <= DEGENERATE_GROUND_AREA) continue;
       actualArea += area;
       for (const p of vertices) positions.push(p.x, p.y, 0);
     }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Raycaster, Vector3 } from 'three';
+import { nextPoint } from '../src/core/geometry/pointMath';
 import { resolveSnap, trenchSnapTargets } from '../src/core/geometry/snapTargets';
 import { trenchOutlines } from '../src/core/geometry/trenchOutline';
 import { emptyProject } from '../src/core/model/project';
@@ -53,6 +54,45 @@ describe('M5 闭合连接', () => {
       expect(hitsGround(ground, 30, 0)).toBe(0);
       expect(hitsGround(ground, 10, 10)).toBe(1);
     } finally { ground.dispose(); }
+  });
+
+  it('连续三段同向基槽依次端点对接：全部接受且地面无缺口', () => {
+    const first = trench('trench-1', [p(0, 40), p(0, 20)]);
+    const second = trench('trench-2', [p(0, 20), p(0, 0)]);
+    const third = trench('trench-3', [p(0, 0), p(0, -20)]);
+    expect(openingsConflict(second, third)).toBe(false);
+    expect(openingsConflict(first, third)).toBe(false);
+    expect(validateProject(projectWith(first, second, third)).ok).toBe(true);
+    const rings = topRings(first, second, third);
+    const ground = new GroundManager(rings);
+    try {
+      const holes = rings.reduce((sum, ring) => sum + area(ring), 0);
+      expectArea(groundArea(ground), 10000 - holes);
+      expect(hitsGround(ground, 0, 30)).toBe(0);
+      expect(hitsGround(ground, 0, 10)).toBe(0);
+      expect(hitsGround(ground, 0, -10)).toBe(0);
+      expect(hitsGround(ground, 5, 30)).toBe(1);
+    } finally { ground.dispose(); }
+  });
+
+  it('精确输入推算的下一段做端点对接：轴上方向精确、不会带入浮点噪声', () => {
+    // cos(270°) 的原始结果是 -1.8e-16；方向分量取整后竖直方向必须是精确的 0 与 -1。
+    const next = nextPoint(p(0, 0), 20, 270);
+    expect(next).toEqual({ x: 0, y: -20 });
+    const first = trench('trench-1', [p(0, 20), p(0, 0)]);
+    const second = trench('trench-2', [next, { x: next.x, y: next.y - 20 }]);
+    expect(openingsConflict(first, second)).toBe(false);
+    expect(validateProject(projectWith(first, second)).ok).toBe(true);
+  });
+
+  it('接触判定对亚微米偏差稳健，真正的交叠仍被发现', () => {
+    const first = trench('trench-1', [p(0, 20), p(0, 0)]);
+    // 1e-12 量级偏移仍然属于边界接触，不能判成内部交叠
+    expect(openingsConflict(first, trench('trench-2', [p(0, 1e-12), p(0, -20)]))).toBe(false);
+    // 1mm 与 1cm 的条带交叠必须被发现
+    expect(openingsConflict(first, trench('trench-3', [p(0, 0.001), p(0, -19.999)]))).toBe(true);
+    expect(openingsConflict(first, trench('trench-4', [p(0, 0.01), p(0, -19.99)]))).toBe(true);
+    expect(openingsConflict(first, trench('trench-5', [p(0, 10), p(0, -10)]))).toBe(true);
   });
 
   it('边对边贴合：贴合线吸附出的中心线让两槽共边而不交叠', () => {
@@ -117,6 +157,7 @@ describe('M5 闭合连接', () => {
     if (!result.ok) {
       expect(result.issues[0]?.path).toBe('elements[1]');
       expect(result.issues[0]?.message).toContain('内部交叠');
+      expect(result.issues[0]?.message).toContain('端点');
       expect(result.issues[0]?.message).toContain('折线基槽');
     }
     const shifted = trench('trench-3', [p(0, 3), p(20, 3)]); // 只平移 3m：仍与第一条交叠
