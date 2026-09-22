@@ -1,5 +1,5 @@
 import { outline } from '../geometry/pitOutline';
-import { distanceToSegment, inside, segmentsTouch } from '../geometry/polygon';
+import { distanceToSegment, inside, ringsOverlap, segmentsTouch } from '../geometry/polygon';
 import { trenchOutlines } from '../geometry/trenchOutline';
 import type { ExcavationElement, Point2, Project, Result, ValidationIssue } from '../model/project';
 import { normalizeDegrees } from '../model/project';
@@ -31,7 +31,13 @@ function ringsTouch(a: Point2[], b: Point2[]): boolean {
   return inside(a[0]!, b) || inside(b[0]!, a) ||
     a.some((p, i) => b.some((q, j) => segmentsTouch(p, a[(i + 1) % a.length]!, q, b[(j + 1) % b.length]!)));
 }
+/**
+ * 开口冲突判定。
+ * 基槽之间允许边界接触（共边、共点、端面贴合），用于闭合连接；只有内部真正交叠才拒绝。
+ * 基坑与基槽、基坑之间保持更严格的“重叠、包含或相切”判定。
+ */
 export function openingsConflict(a: ExcavationElement, b: ExcavationElement): boolean {
+  if (a.type === 'trench' && b.type === 'trench') return ringsOverlap(openingOf(a).ring, openingOf(b).ring);
   const first = openingOf(a), second = openingOf(b);
   if (first.circle && second.circle) {
     return Math.hypot(first.circle.x - second.circle.x, first.circle.y - second.circle.y) <= first.circle.radius + second.circle.radius + EPSILON;
@@ -128,7 +134,13 @@ export function validateProject(input: unknown): Result<Project> {
     if (openingOf(element).ring.some(p => Math.abs(p.x) > MAX_COORDINATE || Math.abs(p.y) > MAX_COORDINATE)) {
       fail(`elements[${i}].position`, `顶部开口超出 ±${MAX_COORDINATE}m 坐标范围`);
     }
-    for (let j = 0; j < i; j++) if (openingsConflict(element, elements[j]!)) fail(`elements[${i}]`, `顶部开口与 ${elements[j]!.id} 重叠、包含或相切`);
+    for (let j = 0; j < i; j++) {
+      const other = elements[j]!;
+      if (!openingsConflict(element, other)) continue;
+      fail(`elements[${i}]`, element.type === 'trench' && other.type === 'trench'
+        ? `顶部开口与 ${other.id} 内部交叠（基槽之间只允许边界接触；转角相接请并入同一条折线基槽，T 形分叉暂不支持）`
+        : `顶部开口与 ${other.id} 重叠、包含或相切`);
+    }
   });
   return issues.length ? { ok: false, issues } : { ok: true,
     value: { version: 1, name, units: 'm', elements, settings } };

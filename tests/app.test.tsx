@@ -402,6 +402,66 @@ describe('M5 俯视绘制与放置', () => {
     expect(dispatch.mock.results.at(-1)?.value.value.elements).toHaveLength(2);
   });
 
+  it('正交模式把鼠标点约束到水平或竖直方向', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '正交模式（仅水平/竖直）' }));
+    clickGround(0, 0);
+    clickGround(3, 2); // 水平位移更大，压到 y=0
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const points = dispatch.mock.results.at(-1)?.value.value.elements[0].points;
+    expect(points).toEqual([{ x: 0, y: 0 }, { x: 3, y: 0 }]);
+  });
+
+  it('中心线吸附到相邻基槽的端点、中心线与贴合线', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    // 端面贴合线（x=22）比端面（x=20）更近，因此吸附到贴合线
+    fireEvent.pointerMove(canvasElement(), groundClient(21.9, -2));
+    expect(screen.getByText(/当前吸附：吸附到 .* 贴合线（边对边）/)).toBeVisible();
+    clickGround(21.9, -2);
+    clickGround(22, 10);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const added = dispatch.mock.results.at(-1)?.value;
+    expect(added.ok).toBe(true);
+    expect(added.value.elements[1].points[0]).toEqual({ x: 22, y: -2 });
+    expect(screen.getByText(/2 个开挖对象/)).toBeVisible();
+  });
+
+  it('吸附到相邻基槽端点，端点对接只共边不交叠', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    fireEvent.pointerMove(canvasElement(), groundClient(19.9, 0.2));
+    expect(screen.getByText(/当前吸附：吸附到 .* 端点/)).toBeVisible();
+    clickGround(19.9, 0.2);
+    clickGround(40, 0);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const added = dispatch.mock.results.at(-1)?.value;
+    expect(added.ok).toBe(true);
+    expect(added.value.elements[1].points).toEqual([{ x: 20, y: 0 }, { x: 40, y: 0 }]);
+  });
+
+  it('中心线相交的分叉被拒绝并提示改用折线基槽', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(10, -5);
+    clickGround(10, 5);
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(dispatch.mock.results.at(-1)?.value.ok).toBe(false);
+    expect(screen.getByRole('alert')).toHaveTextContent('内部交叠');
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    expect(screen.getByText(/已设置 2 个节点/)).toBeVisible(); // 草稿保留，可继续修改
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+  });
+
   it('三种基坑都能放置，重叠时拒绝并保持工具与既有模型', () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);

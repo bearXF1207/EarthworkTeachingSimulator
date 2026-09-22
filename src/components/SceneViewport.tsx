@@ -7,8 +7,10 @@ import type { ViewMode } from '../scene/CameraManager';
 import { DrawingManager, isTextEntryTarget } from '../scene/DrawingManager';
 import type { DrawingState, ToolKind } from '../scene/DrawingManager';
 import { groundPointFromPointer } from '../scene/groundPointer';
-import { isDragGesture, nextPoint, snapPoint } from '../core/geometry/pointMath';
+import { applyLock, isDragGesture, nextPoint, orthoLock, snapPoint } from '../core/geometry/pointMath';
 import { outline } from '../core/geometry/pitOutline';
+import { resolveSnap, snapLabel, trenchSnapTargets } from '../core/geometry/snapTargets';
+import type { SnapResolution, SnapTarget } from '../core/geometry/snapTargets';
 import { ProjectStore } from '../store/ProjectStore';
 import type { Command } from '../store/ProjectStore';
 import { PIT_LABELS, defaultPitDraft, pitFromDraft, trenchFromDraft } from '../core/model/project';
@@ -40,6 +42,9 @@ export function SceneViewport(): ReactElement {
   const [view, setView] = useState<ViewMode>('free');
   const [grid, setGrid] = useState(true);
   const [snap, setSnap] = useState(true);
+  const [ortho, setOrtho] = useState(false);
+  const [snapHint, setSnapHint] = useState('');
+  const snapTargets = useRef<SnapTarget[]>([]);
   const [generation, setGeneration] = useState(0);
   const [status, setStatus] = useState<SceneStatus>({ ready: false, message: '正在初始化场景…' });
   const pointerDown = useRef<Point2 | null>(null);
@@ -61,6 +66,12 @@ export function SceneViewport(): ReactElement {
     return () => { active = false; manager.current?.dispose(); manager.current = null; };
   }, [generation, store]);
 
+  // 吸附目标随工程与当前截面更新：只在提交或改参数后重算，指针移动时直接复用。
+  useEffect(() => {
+    const halfWidth = section.bottomWidth / 2 + section.depth * section.slope;
+    snapTargets.current = trenchSnapTargets(project.elements, { halfWidth });
+  }, [project, section]);
+
   function dispatch(command: Command, reportError = true): Result<Project> {
     const result = store.dispatch(command, next => {
       if (!manager.current) throw new Error('Scene unavailable');
@@ -76,12 +87,21 @@ export function SceneViewport(): ReactElement {
   function changeView(next: ViewMode): void { manager.current?.setView(next); setView(next); }
   function restoreView(): void { if (view !== viewBeforeTool.current) changeView(viewBeforeTool.current); }
 
-  /** 屏幕点投影到地面并吸附；只有俯视用于绘制，画布外返回 null。 */
-  function projectionPoint(event: { clientX: number; clientY: number }): Point2 | null {
+  /**
+   * 绘制点解析：投影到地面 → 正交约束（仅鼠标绘制）→ 相邻基槽吸附 → 1m 网格兜底。
+   * 只有俯视用于绘制，画布外返回 null；基坑放置只做网格吸附。
+   */
+  function draftPoint(event: { clientX: number; clientY: number }): SnapResolution | null {
     const instance = manager.current;
     if (!instance || view !== 'top') return null;
     const ground = groundPointFromPointer(event.clientX, event.clientY, instance.cameras.active, instance.domElement.getBoundingClientRect());
-    return ground ? snapPoint(ground, snap, store.getSnapshot().settings.snapSpacing) : null;
+    if (!ground) return null;
+    const spacing = store.getSnapshot().settings.snapSpacing;
+    if (draw.kind !== 'drawTrench') return { point: snapPoint(ground, snap, spacing), kind: 'grid', sourceId: null };
+    const last = draw.nodes[draw.nodes.length - 1];
+    const lock = ortho && last ? orthoLock(last, ground) : null;
+    const raw = lock ? applyLock(lock, ground) : ground;
+    return resolveSnap(raw, snapTargets.current, { grid: snap, spacing, lock });
   }
 
   /** 预览只显示未提交草稿：基槽为中心线，基坑为槽顶轮廓。 */
@@ -104,7 +124,9 @@ export function SceneViewport(): ReactElement {
   }
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
     if (!toolActive) return;
-    const point = projectionPoint(event);
+    const resolved = draftPoint(event);
+    const point = resolved?.point ?? null;
+    setSnapHint(draw.kind === 'drawTrench' && resolved ? snapLabel(resolved) : '');
     const next = drawing.moveCursor(point);
     setDraw(next);
     refreshPreview(next, point);
@@ -112,16 +134,17 @@ export function SceneViewport(): ReactElement {
   function onClick(event: ReactMouseEvent<HTMLDivElement>): void {
     const down = pointerDown.current; pointerDown.current = null;
     if (down && isDragGesture(down, { x: event.clientX, y: event.clientY })) return;
-    const point = projectionPoint(event);
-    if (!point) return;
+    const resolved = draftPoint(event);
+    if (!resolved) return;
     if (draw.kind === 'drawTrench') {
-      const { state, added } = drawing.addNode(point, event.detail);
+      const { state, added } = drawing.addNode(resolved.point, event.detail);
       setDraw(state);
+      setSnapHint(snapLabel(resolved));
       if (added) setDrawMessage('');
       refreshPreview(state, state.kind === 'drawTrench' ? state.cursor : null);
       return;
     }
-    if (draw.kind === 'placePit') placePit(point);
+    if (draw.kind === 'placePit') placePit(resolved.point);
   }
   function onDoubleClick(): void { if (draw.kind === 'drawTrench') finishTrench(); }
 
@@ -130,23 +153,24 @@ export function SceneViewport(): ReactElement {
     if (draw.kind !== 'drawTrench') return;
     if (draw.nodes.length < 2) { setDrawMessage('至少需要两个节点才能完成基槽'); return; }
     const element = trenchFromDraft(crypto.randomUUID(), draw.nodes, section);
-    const result = dispatch({ type: 'add', element });
+    // 失败原因显示在绘制面板，避免与属性面板的错误提示重复。
+    const result = dispatch({ type: 'add', element }, false);
     if (!result.ok) { setDrawMessage(failure(result)); return; }
-    setSelected(element.id); setDrawMessage('');
+    setSelected(element.id); setDrawMessage(''); setSnapHint('');
     setDraw(drawing.cancel());
     manager.current?.setPreviewPoints([]);
     restoreView();
   }
   function cancelDrawing(): void {
     setDraw(drawing.cancel());
-    setDrawMessage('');
+    setDrawMessage(''); setSnapHint('');
     manager.current?.setPreviewPoints([]);
     restoreView();
   }
   function changeTool(kind: ToolKind): void {
     if (kind === 'measure') return;
     setDraw(drawing.setTool(kind));
-    setDrawMessage(''); setError('');
+    setDrawMessage(''); setError(''); setSnapHint('');
     manager.current?.setPreviewPoints([]);
     if (kind === 'select') restoreView();
     else { viewBeforeTool.current = view; changeView('top'); }
@@ -207,6 +231,7 @@ export function SceneViewport(): ReactElement {
   </section><aside className="next-stage" aria-label="绘制与开挖对象属性">
     <h2>绘制与参数</h2>
     <DrawingPanel state={draw} ready={status.ready} message={drawMessage} section={section} pit={pit}
+      ortho={ortho} onOrtho={setOrtho} hint={snapHint}
       onTool={changeTool} onSection={setSection} onPit={setPit} onAdvance={advance} onFinish={finishTrench} onCancel={cancelDrawing} />
     <label>当前对象<select aria-label="当前对象" value={selected} onChange={e => { setSelected(e.target.value); setError(''); }}>
       <option value="">请选择对象</option>{project.elements.map(e => <option key={e.id} value={e.id}>{e.id} · {elementLabel(e)}</option>)}

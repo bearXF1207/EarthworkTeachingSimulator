@@ -142,9 +142,16 @@ describe('M3 基槽参数与冲突校验', () => {
     expect(validateProject(projectWith(square, trench({ points: [{ x: -12, y: 6 }, { x: 8, y: 6 }] }))).ok).toBe(true);
     expect(validateProject(projectWith(square, trench())).ok).toBe(false);
   });
-  it('基槽之间、基槽与圆坑、包含关系同样拒绝', () => {
-    expect(openingsConflict(trench(), trench({ id: 't2', points: [{ x: 0, y: 4 }, { x: 20, y: 4 }] }))).toBe(true);
+  it('基槽之间允许边界接触，内部交叠仍拒绝', () => {
+    // M5 起：基槽之间可以闭合连接，共边接触、端面贴合与共角点都允许。
+    expect(openingsConflict(trench(), trench({ id: 't2', points: [{ x: 0, y: 4 }, { x: 20, y: 4 }] }))).toBe(false); // 顶边 y=2 共边
+    expect(openingsConflict(trench(), trench({ id: 't2', points: [{ x: 20, y: 0 }, { x: 40, y: 0 }] }))).toBe(false); // 端面贴合
+    expect(openingsConflict(trench(), trench({ id: 't3', points: [{ x: 22, y: 4 }, { x: 42, y: 4 }] }))).toBe(false); // 共角点
+    expect(openingsConflict(trench(), trench({ id: 't2', points: [{ x: 0, y: 3.9 }, { x: 20, y: 3.9 }] }))).toBe(true); // 0.1m 交叠
+    expect(openingsConflict(trench(), trench({ id: 't2', points: [{ x: 10, y: 0 }, { x: 30, y: 0 }] }))).toBe(true); // 同向重叠
     expect(openingsConflict(trench(), trench({ id: 't2', points: [{ x: 0, y: 4.001 }, { x: 20, y: 4.001 }] }))).toBe(false);
+  });
+  it('基槽与圆坑、包含关系保持严格拒绝', () => {
     const circle: Pit = { id: 'p2', type: 'circular-pit', position: { x: 10, y: 0 }, depth: 2, slope: .5, bottomDiameter: 4 };
     expect(openingsConflict(circle, trench())).toBe(true); // 圆坑顶半径3 与槽顶边缘2 相交
     expect(openingsConflict(circle, trench({ points: [{ x: 0, y: 20 }, { x: 20, y: 20 }] }))).toBe(false);

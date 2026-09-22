@@ -34,14 +34,15 @@ function SegmentForm({ disabled, onAdvance }: { disabled: boolean; onAdvance: (l
 }
 
 type Props = {
-  state: DrawingState; ready: boolean; message: string;
-  section: TrenchSection; pit: PitDraftParams;
+  state: DrawingState; ready: boolean; message: string; hint: string;
+  section: TrenchSection; pit: PitDraftParams; ortho: boolean;
   onTool: (kind: ToolKind) => void; onSection: (section: TrenchSection) => void; onPit: (pit: PitDraftParams) => void;
+  onOrtho: (enabled: boolean) => void;
   onAdvance: (length: number, angle: number) => void; onFinish: () => void; onCancel: () => void;
 };
 
-/** M5 绘制面板：工具切换、草稿读数与精确输入、基坑放置参数。草稿不进入项目数据。 */
-export function DrawingPanel({ state, ready, message, section, pit, onTool, onSection, onPit, onAdvance, onFinish, onCancel }: Props): ReactElement {
+/** M5 绘制面板：工具切换、草稿读数与精确输入、基坑放置参数、正交模式与吸附提示。草稿不进入项目数据。 */
+export function DrawingPanel({ state, ready, message, hint, section, pit, ortho, onTool, onSection, onPit, onOrtho, onAdvance, onFinish, onCancel }: Props): ReactElement {
   const nodes = state.kind === 'drawTrench' ? state.nodes : [];
   const segments = polylineReport(nodes);
   const cursor = state.kind === 'drawTrench' ? state.cursor : null;
@@ -67,9 +68,12 @@ export function DrawingPanel({ state, ready, message, section, pit, onTool, onSe
     </div>
     {state.kind === 'drawTrench' && <div className="draw-draft">
       <p className="scope-note">已设置 {nodes.length} 个节点：在俯视场地单击添加，双击或 Enter 完成，Esc 取消。绘制期间锁定视角。</p>
+      <label><input type="checkbox" checked={ortho} onChange={event => onOrtho(event.target.checked)} />正交模式（仅水平/竖直）</label>
+      <p className="scope-note">中心线会吸附到相邻基槽的端点、中心线与槽顶边界，可用端点对接、共边贴合或围合成封闭区域；基槽之间只允许边界接触。正交模式只约束鼠标绘制，长度/角度输入仍按输入值。</p>
       {segments.map((segment, index) =>
         <p key={index}>第 {index + 1} 段：{format(segment.length, 2)}m · 方位角 {format(segment.angle, 1)}°</p>)}
       {rubber && <p>当前段：{format(rubber.length, 2)}m · 方位角 {format(rubber.angle, 1)}°</p>}
+      {hint && <p className="scope-note">当前吸附：{hint}</p>}
       <SegmentForm disabled={!ready || !nodes.length} onAdvance={onAdvance} />
       <NumberFields fields={sectionFields} apply={values => {
         onSection({ bottomWidth: values.bottomWidth!, depth: values.depth!, slope: values.slope! });

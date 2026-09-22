@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { OrthographicCamera, Vector3 } from 'three';
-import { isDragGesture, nextPoint, polylineReport, shouldAppendNode, snapPoint } from '../src/core/geometry/pointMath';
+import { applyLock, isDragGesture, nextPoint, orthoLock, orthoPoint, polylineReport, shouldAppendNode, snapPoint } from '../src/core/geometry/pointMath';
+import { resolveSnap, snapLabel, trenchSnapTargets } from '../src/core/geometry/snapTargets';
 import { normalizeDegrees } from '../src/core/model/project';
+import type { ExcavationElement, Point2 } from '../src/core/model/project';
 import { DrawingManager, isTextEntryTarget } from '../src/scene/DrawingManager';
 import { groundPointFromPointer, pointerNdc } from '../src/scene/groundPointer';
 
 const p = (x: number, y: number): { x: number; y: number } => ({ x, y });
+const trench = (id: string, points: Point2[], over: Record<string, number> = {}): ExcavationElement =>
+  ({ id, type: 'trench', points, bottomWidth: 2, depth: 2, slope: .5, ...over } as ExcavationElement);
 
 describe('M5 吸附、精确输入与读数', () => {
   it('开启吸附取最近整米格点，关闭时保留原值', () => {
@@ -103,6 +107,96 @@ describe('M5 绘制状态机', () => {
     expect(isTextEntryTarget(select)).toBe(true);
     expect(isTextEntryTarget(document.body)).toBe(false);
     expect(isTextEntryTarget(null)).toBe(false);
+  });
+});
+
+describe('M5 正交模式', () => {
+  it('取位移较大的分量作为水平或竖直约束', () => {
+    expect(orthoPoint(p(0, 0), p(3, 2))).toEqual(p(3, 0));
+    expect(orthoPoint(p(0, 0), p(2, 3))).toEqual(p(0, 3));
+    expect(orthoPoint(p(0, 0), p(-3, 2.5))).toEqual(p(-3, 0));
+    expect(orthoPoint(p(1, 1), p(1.4, 1.5))).toEqual(p(1, 1.5));
+    expect(orthoPoint(p(0, 0), p(2, 2))).toEqual(p(2, 0)); // 相等取水平
+  });
+  it('锁定轴与压轴一致：正交后锁定分量保持前的节点值', () => {
+    const lock = orthoLock(p(5, 5), p(9, 6));
+    expect(lock).toEqual({ axis: 'y', value: 5 });
+    expect(applyLock(lock, p(9, 6))).toEqual(p(9, 5));
+    const vertical = orthoLock(p(5, 5), p(6, 11));
+    expect(vertical).toEqual({ axis: 'x', value: 5 });
+    expect(applyLock(vertical, p(6, 11))).toEqual(p(5, 11));
+  });
+});
+
+describe('M5 相邻基槽吸附', () => {
+  const line = trench('trench-1', [p(0, 0), p(10, 0)]);
+  const targets = trenchSnapTargets([line]);
+  it('目标包含中心线节点、中心线、槽顶边界角点与边界边', () => {
+    expect(targets.filter(t => t.kind === 'node')).toHaveLength(2);
+    expect(targets.filter(t => t.kind === 'centerline')).toHaveLength(1);
+    expect(targets.filter(t => t.kind === 'boundary-corner')).toHaveLength(4);
+    expect(targets.filter(t => t.kind === 'boundary-edge')).toHaveLength(4);
+    expect(targets.filter(t => t.kind === 'flush-line')).toHaveLength(0); // 未给顶半宽时不生成贴合线
+    expect(trenchSnapTargets([line], { excludeId: 'trench-1' })).toHaveLength(0);
+    expect(trenchSnapTargets([line], { halfWidth: 2 }).filter(t => t.kind === 'flush-line')).toHaveLength(4);
+  });
+  it('贴合线把槽顶边界向外平移新槽顶半宽，用于边对边贴合', () => {
+    const flush = trenchSnapTargets([line], { halfWidth: 2 });
+    const bottom = flush.find(t => t.kind === 'flush-line' && t.shape === 'segment' && t.from.y === -4);
+    expect(bottom).toBeDefined();
+    const snapped = resolveSnap(p(5, -3.6), flush);
+    expect(snapped.kind).toBe('flush-line');
+    expect(snapped.point).toEqual(p(5, -4)); // 顶半宽 2 时，中心线 y=-4 的槽顶边界正好落在 y=-2
+    expect(snapLabel(snapped)).toBe('吸附到 trench-1 贴合线（边对边）');
+    const clamped = resolveSnap(p(-1.2, -4.3), flush); // 超出贴合线端点时投到端点
+    expect(clamped.kind).toBe('flush-line');
+    expect(clamped.point).toEqual(p(0, -4));
+  });
+  it('鼠标位置决定吸附到端点、中心线还是槽顶边界', () => {
+    const endpoint = resolveSnap(p(-0.1, 0.1), targets);
+    expect(endpoint.kind).toBe('node');
+    expect(endpoint.point).toEqual(p(0, 0));
+    expect(endpoint.sourceId).toBe('trench-1');
+    const middle = resolveSnap(p(5, 0.4), targets);
+    expect(middle.kind).toBe('centerline');
+    expect(middle.point).toEqual(p(5, 0));
+    const boundary = resolveSnap(p(5, 1.2), targets);
+    expect(boundary.kind).toBe('boundary-edge');
+    expect(boundary.point).toEqual(p(5, 2));
+    const corner = resolveSnap(p(10.2, 2.1), targets);
+    expect(corner.kind).toBe('boundary-corner');
+    expect(corner.point).toEqual(p(10, 2));
+  });
+  it('超出半径回到 1m 网格，关闭吸附时保留原始坐标', () => {
+    const far = resolveSnap(p(30.2, 30.7), targets);
+    expect(far.kind).toBe('grid');
+    expect(far.point).toEqual(p(30, 31));
+    const free = resolveSnap(p(30.2, 30.7), targets, { grid: false });
+    expect(free.kind).toBe('none');
+    expect(free.point).toEqual(p(30.2, 30.7));
+    const near = resolveSnap(p(3.4, 0.2), targets, { radius: 0.05 });
+    expect(near.kind).toBe('grid');
+  });
+  it('正交锁定只接受锁定轴一致的目标，网格也只吸附自由坐标', () => {
+    const lock = { axis: 'y' as const, value: 0 };
+    const onLine = resolveSnap(p(4.2, 0), targets, { lock });
+    expect(onLine.kind).toBe('centerline');
+    expect(onLine.point).toEqual(p(4.2, 0));
+    const boundaryOnAxis = resolveSnap(p(10.1, 2), targets, { lock: { axis: 'y', value: 2 } });
+    expect(boundaryOnAxis.kind).toBe('boundary-corner');
+    expect(boundaryOnAxis.point).toEqual(p(10, 2));
+    // 锁定轴与所有目标都不一致时只吸附自由坐标
+    const incompatible = resolveSnap(p(5, 2.9), targets, { lock: { axis: 'y', value: 3 } });
+    expect(incompatible.kind).toBe('grid');
+    expect(incompatible.point).toEqual(p(5, 3));
+    const far = resolveSnap(p(30.2, 30.7), targets, { lock });
+    expect(far.point).toEqual(p(30, 0));
+  });
+  it('吸附提示可读', () => {
+    expect(snapLabel(resolveSnap(p(-0.1, 0.1), targets))).toBe('吸附到 trench-1 端点');
+    expect(snapLabel(resolveSnap(p(5, 1.2), targets))).toBe('吸附到 trench-1 槽顶边界');
+    expect(snapLabel(resolveSnap(p(30.2, 30.7), targets))).toBe('吸附到 1m 网格');
+    expect(snapLabel(resolveSnap(p(30.2, 30.7), targets, { grid: false }))).toBe('自由坐标（无吸附）');
   });
 });
 

@@ -55,6 +55,25 @@ export function shouldAppendNode(nodes: Point2[], point: Point2, detail: number)
   return last === undefined || !samePoint(last, point);
 }
 
+/** 正交模式锁定的轴与数值：锁定轴不做吸附，保持水平或竖直。 */
+export type AxisLock = { axis: 'x' | 'y'; value: number };
+
+/**
+ * 正交模式的锁定轴：取相对 `from` 位移较大的分量，相等时取水平。
+ * 只作用于鼠标绘制；长度/角度精确输入保持用户显式指定的方向。
+ */
+export function orthoLock(from: Point2, point: Point2): AxisLock {
+  return Math.abs(point.x - from.x) >= Math.abs(point.y - from.y)
+    ? { axis: 'y', value: from.y } : { axis: 'x', value: from.x };
+}
+
+/** 把点压到锁定轴上。 */
+export const applyLock = (lock: AxisLock, point: Point2): Point2 =>
+  lock.axis === 'x' ? { x: lock.value, y: point.y } : { x: point.x, y: lock.value };
+
+/** 正交约束后的点：`applyLock(orthoLock(...))` 的便捷写法。 */
+export const orthoPoint = (from: Point2, point: Point2): Point2 => applyLock(orthoLock(from, point), point);
+
 /** 按下与抬起之间移动超过阈值视为拖动（平移/缩放），不产生节点。 */
 export function isDragGesture(down: Point2, up: Point2, threshold = DRAG_THRESHOLD): boolean {
   return Math.hypot(up.x - down.x, up.y - down.y) > threshold;
