@@ -67,7 +67,7 @@ export function SceneViewport(): ReactElement {
     return () => { active = false; manager.current?.dispose(); manager.current = null; };
   }, [generation, store]);
 
-  // 吸附目标随工程与当前截面更新：只在提交或改参数后重算，指针移动时直接复用。
+  // 吸附目标随工程与当前截面更新：中心线骨架为主、贴合线为辅，指针移动时直接复用。
   useEffect(() => {
     const halfWidth = section.bottomWidth / 2 + section.depth * section.slope;
     snapTargets.current = trenchSnapTargets(project.elements, { halfWidth });
@@ -160,6 +160,9 @@ export function SceneViewport(): ReactElement {
   }
   function onDoubleClick(): void { if (liveState().kind === 'drawTrench') finishTrench(); }
 
+  // 选中对象时高亮其中心线；重建场景后同样重新应用。
+  useEffect(() => { manager.current?.setSelected(selected || null); }, [selected, project, generation]);
+
   /**
    * 双击、Enter、Ctrl/Cmd+Enter 与“完成基槽”按钮共用同一个校验/提交入口。
    * 成功时整槽只提交一次；失败保留可修改草稿并显示原因。重复触发自然成为空操作。
@@ -211,7 +214,8 @@ export function SceneViewport(): ReactElement {
   }
   function update(element: ExcavationElement): Result<Project> { return dispatch({ type: 'update', element }, false); }
 
-  shortcuts.current = { finish: finishTrench, cancel: cancelDrawing };
+  // 每次渲染后刷新确认/取消入口，键盘监听始终调用最新实现（确认本身也读实时草稿）。
+  useEffect(() => { shortcuts.current = { finish: finishTrench, cancel: cancelDrawing }; });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       // 输入法组合状态中的按键一律不触发场景命令。

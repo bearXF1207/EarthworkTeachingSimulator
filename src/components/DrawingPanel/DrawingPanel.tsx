@@ -77,7 +77,7 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
         ? <p className="scope-note">已首尾闭合：确认后生成<strong>环形基槽</strong>，外圈是开挖开口、内圈包围的岛保持地面。</p>
         : <p className="scope-note">把最后一个节点吸附回起点（提示“首尾闭合”）即可围合成环形基槽。</p>}
       <label><input type="checkbox" checked={ortho} onChange={event => onOrtho(event.target.checked)} />正交模式（仅水平/竖直）</label>
-      <p className="scope-note">中心线会吸附到相邻基槽的端点、中心线与槽顶边界，也可以吸附回自身起点闭合；基槽之间只允许边界接触。正交模式只约束鼠标绘制，长度/角度输入仍按输入值。</p>
+      <p className="scope-note">中心线优先吸附到相邻基槽的<strong>中心线</strong>（落在对方槽带内即可命中），也可吸附回自身起点闭合；远处才吸附“贴合线”用于平行并排。从相邻槽中心线起画时，确认后会按对方槽顶边界自动收边，开口只共边、多条基槽相互贯通。正交模式只约束鼠标绘制，长度/角度输入仍按输入值。</p>
       {segments.map((segment, index) =>
         <p key={index}>第 {index + 1} 段：{format(segment.length, 2)}m · 方位角 {format(segment.angle, 1)}°</p>)}
       {last && <p>当前点：({format(last.x, 2)}, {format(last.y, 2)})</p>}

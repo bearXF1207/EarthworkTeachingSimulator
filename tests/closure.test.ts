@@ -4,6 +4,7 @@ import { nextPoint } from '../src/core/geometry/pointMath';
 import { resolveSnap, ringCloseTarget, trenchSnapTargets } from '../src/core/geometry/snapTargets';
 import { buildTrench } from '../src/core/geometry/trench';
 import { isClosedRing, trenchOutlines } from '../src/core/geometry/trenchOutline';
+import { trimEndsToNeighbours } from '../src/core/geometry/trenchTrim';
 import { emptyProject } from '../src/core/model/project';
 import type { ExcavationElement, Point2, Trench } from '../src/core/model/project';
 import { openingsConflict, validateProject } from '../src/core/validation/project';
@@ -96,7 +97,47 @@ describe('M5 闭合连接', () => {
     expect(openingsConflict(first, trench('trench-5', [p(0, 10), p(0, -10)]))).toBe(true);
   });
 
-  it('边对边贴合：贴合线吸附出的中心线让两槽共边而不交叠', () => {
+  it('吸附到中心后自动收边：两槽共边贴合而非半宽叠合', () => {
+    const first = trench('trench-1', [p(0, 0), p(20, 0)]);
+    const snapped = resolveSnap(p(10, 0.6), trenchSnapTargets([first]));
+    expect(snapped.kind).toBe('centerline');
+    // 从相邻槽中心线起画，顶半宽 2 的端面收边后退到对方槽顶边界 y=2
+    const trimmed = trimEndsToNeighbours([snapped.point, p(10, 12)], 2, [trenchOutlines(first).topOutline])!;
+    expect(trimmed).toHaveLength(2);
+    // 收边留 10nm 级缝隙保证地面三角化稳定，按微米级容差比较
+    expect(trimmed[0]!.x).toBeCloseTo(10, 6);
+    expect(trimmed[0]!.y).toBeCloseTo(2, 6);
+    expect(trimmed[1]).toEqual(p(10, 12));
+    const second = trench('trench-2', trimmed!);
+    expect(openingsConflict(first, second)).toBe(false);
+    expect(validateProject(projectWith(first, second)).ok).toBe(true);
+    const rings = topRings(first, second);
+    const ground = new GroundManager(rings);
+    try {
+      const holes = rings.reduce((sum, item) => sum + area(item), 0);
+      // 两个孔洞沿部分边共边时 earcut 会留下零面积级碎片，面积按 1e-4 m² 容差核对
+      expect(Math.abs(groundArea(ground) - (10000 - holes))).toBeLessThan(1e-4);
+      expect(hitsGround(ground, 10, 1)).toBe(0); // 两槽覆盖范围都没有地面（贯通）
+      expect(hitsGround(ground, 10, 8)).toBe(0);
+      expect(hitsGround(ground, 5, 8)).toBe(1);
+    } finally { ground.dispose(); }
+  });
+
+  it('整条中心线落在相邻槽内时收边失败：返回 null 由命令层拒绝', () => {
+    const first = trench('trench-1', [p(0, 0), p(20, 0)]);
+    const ring = trenchOutlines(first).topOutline;
+    // 整段（含端面角点）都在对方槽内：收边后不再构成一段
+    expect(trimEndsToNeighbours([p(5, 0), p(5, 1)], 2, [ring])).toBeNull();
+    // 一端在槽内、一端在外：收边后仍然是一段合法中心线
+    const trimmed = trimEndsToNeighbours([p(5, 0), p(5, 12)], 2, [ring])!;
+    expect(trimmed[0]!.x).toBeCloseTo(5, 6);
+    expect(trimmed[0]!.y).toBeCloseTo(2, 6);
+    expect(trimmed[1]).toEqual(p(5, 12));
+    // 与对方边界正好共边时不收边
+    expect(trimEndsToNeighbours([p(5, 2), p(5, 12)], 2, [ring])).toEqual([p(5, 2), p(5, 12)]);
+  });
+
+  it('平行并排：贴合线（次级目标）让两槽共边贴合', () => {
     const first = trench('trench-1', [p(0, 0), p(20, 0)]);
     const targets = trenchSnapTargets([first], { halfWidth });
     const snapped = resolveSnap(p(5.3, -3.7), targets);

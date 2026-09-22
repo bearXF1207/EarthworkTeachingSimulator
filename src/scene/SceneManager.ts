@@ -21,6 +21,7 @@ export class SceneManager {
   private readonly renderer: RendererPort;
   private ground: GroundManager | null = null;
   private excavation: ExcavationMeshes | null = null;
+  private selectedId: string | null = null;
   private controls: OrbitControls | null = null;
   private observer: ResizeObserver | null = null;
   private disposed = false;
@@ -83,10 +84,15 @@ export class SceneManager {
   setGridVisible(visible: boolean): void { this.ground?.setGridVisible(visible); }
   setDisplayMode(mode: DisplayMode): void { this.displayMode = mode; this.excavation?.setWireframe(mode === 'wireframe'); }
   getDisplayMode(): DisplayMode { return this.displayMode; }
+  /** 选中对象时高亮其基槽中心线（3D 视图下同样可见）。 */
+  setSelected(id: string | null): void { this.selectedId = id; if (!this.disposed) this.excavation?.setSelected(id); }
+  /** 供测试与验收读取当前开挖网格（含中心线高亮状态）。 */
+  get excavationMeshes(): ExcavationMeshes | null { return this.excavation; }
 
   prepareProject(project: Project): Prepared {
     if (this.disposed) throw new Error('Scene disposed');
     const excavation = new ExcavationMeshes(project.elements, this.displayMode === 'wireframe');
+    excavation.setSelected(this.selectedId);
     let ground: GroundManager;
     try { ground = new GroundManager(excavation.holes, project.settings.groundSize, excavation.islands); }
     catch (error) { excavation.dispose(); throw error; }

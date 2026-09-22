@@ -414,20 +414,26 @@ describe('M5 俯视绘制与放置', () => {
     expect(points).toEqual([{ x: 0, y: 0 }, { x: 3, y: 0 }]);
   });
 
-  it('中心线吸附到相邻基槽的端点、中心线与贴合线', () => {
+  it('吸附到相邻基槽中心线后自动收边，两槽共边贯通', () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);
     drawTrench([[0, 0], [20, 0]]);
     fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
-    // 端面贴合线（x=22）比端面（x=20）更近，因此吸附到贴合线
-    fireEvent.pointerMove(canvasElement(), groundClient(21.9, -2));
-    expect(screen.getByText(/当前吸附：吸附到 .* 贴合线（边对边）/)).toBeVisible();
-    clickGround(21.9, -2);
-    clickGround(22, 10);
+    // 画在相邻槽槽带内（y=0.6）也吸附到它的中心线 y=0
+    fireEvent.pointerMove(canvasElement(), groundClient(10, 0.6));
+    expect(screen.getByText(/当前吸附：吸附到 .* 中心线/)).toBeVisible();
+    clickGround(10, 0.6);
+    clickGround(10, 12);
     fireEvent.keyDown(window, { key: 'Enter' });
     const added = dispatch.mock.results.at(-1)?.value;
     expect(added.ok).toBe(true);
-    expect(added.value.elements[1].points[0]).toEqual({ x: 22, y: -2 });
+    expect(added.value.elements).toHaveLength(2);
+    // 首端自动退到相邻槽顶边界 y=2：开口只共边，两条基槽相互贯通
+    const points = added.value.elements[1].points;
+    expect(points).toHaveLength(2);
+    expect(points[0]!.x).toBeCloseTo(10, 6);
+    expect(points[0]!.y).toBeCloseTo(2, 6);
+    expect(points[1]).toEqual({ x: 10, y: 12 });
     expect(screen.getByText(/2 个开挖对象/)).toBeVisible();
   });
 

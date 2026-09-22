@@ -34,7 +34,10 @@ export class GroundManager {
       actualArea += area;
       for (const p of vertices) positions.push(p.x, p.y, 0);
     }
-    if (Math.abs(actualArea - expectedArea) > Math.max(1e-6, expectedArea * 1e-10)) throw new Error('Incomplete ground triangulation');
+    const areaError = Math.abs(actualArea - expectedArea);
+    if (areaError > Math.max(1e-6, expectedArea * 1e-10)) {
+      throw new Error(`Incomplete ground triangulation: actual ${actualArea} vs expected ${expectedArea}`);
+    }
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3)); geometry.computeVertexNormals();
     this.ground = new Mesh(geometry, new MeshStandardMaterial({ color: 0x7d8060, roughness: 1, side: DoubleSide }));

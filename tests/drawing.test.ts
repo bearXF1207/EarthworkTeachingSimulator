@@ -136,31 +136,43 @@ describe('M5 正交模式', () => {
   });
 });
 
-describe('M5 相邻基槽吸附', () => {
+describe('M5 相邻基槽吸附（吸附到中心）', () => {
   const line = trench('trench-1', [p(0, 0), p(10, 0)]);
   const targets = trenchSnapTargets([line]);
-  it('目标包含中心线节点、中心线、槽顶边界角点与边界边', () => {
+  it('目标只包含中心线骨架：节点与中心线', () => {
     expect(targets.filter(t => t.kind === 'node')).toHaveLength(2);
     expect(targets.filter(t => t.kind === 'centerline')).toHaveLength(1);
-    expect(targets.filter(t => t.kind === 'boundary-corner')).toHaveLength(4);
-    expect(targets.filter(t => t.kind === 'boundary-edge')).toHaveLength(4);
-    expect(targets.filter(t => t.kind === 'flush-line')).toHaveLength(0); // 未给顶半宽时不生成贴合线
+    expect(targets).toHaveLength(3); // 槽顶边界与贴合线不再参与吸附
+    // band = 对方槽顶半宽 B/2+mH = 1+1 = 2，用作中心线目标的附加吸附范围
+    expect(targets.every(t => t.band === 2)).toBe(true);
     expect(trenchSnapTargets([line], { excludeId: 'trench-1' })).toHaveLength(0);
+    // 贴合线只在给出新槽顶半宽时生成，且属于次级层
     expect(trenchSnapTargets([line], { halfWidth: 2 }).filter(t => t.kind === 'flush-line')).toHaveLength(4);
   });
-  it('贴合线把槽顶边界向外平移新槽顶半宽，用于边对边贴合', () => {
-    const flush = trenchSnapTargets([line], { halfWidth: 2 });
-    const bottom = flush.find(t => t.kind === 'flush-line' && t.shape === 'segment' && t.from.y === -4);
-    expect(bottom).toBeDefined();
-    const snapped = resolveSnap(p(5, -3.6), flush);
-    expect(snapped.kind).toBe('flush-line');
-    expect(snapped.point).toEqual(p(5, -4)); // 顶半宽 2 时，中心线 y=-4 的槽顶边界正好落在 y=-2
-    expect(snapLabel(snapped)).toBe('吸附到 trench-1 贴合线（边对边）');
-    const clamped = resolveSnap(p(-1.2, -4.3), flush); // 超出贴合线端点时投到端点
-    expect(clamped.kind).toBe('flush-line');
-    expect(clamped.point).toEqual(p(0, -4));
+  it('中心线骨架优先于贴合线：槽带内吸附到中心，远处才落到贴合线', () => {
+    const withFlush = trenchSnapTargets([line], { halfWidth: 2 });
+    // 槽顶边界处（y=2）在中心线目标范围内，吸附到中心而不是贴边
+    expect(resolveSnap(p(5, 2), withFlush).kind).toBe('centerline');
+    expect(resolveSnap(p(5, 2), withFlush).point).toEqual(p(5, 0));
+    // 超出“半径 + 槽带”（3.5m）后由贴合线接管：中心线 y=-4 时两槽只共边
+    const flush = resolveSnap(p(5, -4.2), withFlush);
+    expect(flush.kind).toBe('flush-line');
+    expect(flush.point).toEqual(p(5, -4));
   });
-  it('鼠标位置决定吸附到端点、中心线还是槽顶边界', () => {
+  it('吸附到中心：鼠标落在槽带范围内都吸附到相邻中心线', () => {
+    const onBoundary = resolveSnap(p(5, 2), targets); // 槽顶边界 y=2 处
+    expect(onBoundary.kind).toBe('centerline');
+    expect(onBoundary.point).toEqual(p(5, 0));
+    const insideBand = resolveSnap(p(5, 1.2), targets);
+    expect(insideBand.kind).toBe('centerline');
+    expect(insideBand.point).toEqual(p(5, 0));
+    const beyondBand = resolveSnap(p(5, 3.4), targets); // 半径 1.5 + 槽带 2 之内
+    expect(beyondBand.kind).toBe('centerline');
+    expect(beyondBand.point).toEqual(p(5, 0));
+    const outOfRange = resolveSnap(p(5, 3.6), targets);
+    expect(outOfRange.kind).toBe('grid');
+  });
+  it('鼠标位置决定吸附到端点还是中心线', () => {
     const endpoint = resolveSnap(p(-0.1, 0.1), targets);
     expect(endpoint.kind).toBe('node');
     expect(endpoint.point).toEqual(p(0, 0));
@@ -168,12 +180,10 @@ describe('M5 相邻基槽吸附', () => {
     const middle = resolveSnap(p(5, 0.4), targets);
     expect(middle.kind).toBe('centerline');
     expect(middle.point).toEqual(p(5, 0));
-    const boundary = resolveSnap(p(5, 1.2), targets);
-    expect(boundary.kind).toBe('boundary-edge');
-    expect(boundary.point).toEqual(p(5, 2));
-    const corner = resolveSnap(p(10.2, 2.1), targets);
-    expect(corner.kind).toBe('boundary-corner');
-    expect(corner.point).toEqual(p(10, 2));
+    // 端点之外仍投到端点，便于端点对接
+    const beyondEnd = resolveSnap(p(10.2, 2.1), targets);
+    expect(beyondEnd.kind).toBe('node');
+    expect(beyondEnd.point).toEqual(p(10, 0));
   });
   it('靠近相邻基槽端部时优先吸附端点，避免中心线吸附导致内部交叠', () => {
     const nearEnd = resolveSnap(p(9.5, 0), targets);
@@ -195,17 +205,17 @@ describe('M5 相邻基槽吸附', () => {
     const free = resolveSnap(p(30.2, 30.7), targets, { grid: false });
     expect(free.kind).toBe('none');
     expect(free.point).toEqual(p(30.2, 30.7));
-    const near = resolveSnap(p(3.4, 0.2), targets, { radius: 0.05 });
-    expect(near.kind).toBe('grid');
+    // radius 只决定槽带之外的额外范围：槽带内始终吸附到中心
+    const inBand = resolveSnap(p(3.4, 0.2), targets, { radius: 0.05 });
+    expect(inBand.kind).toBe('centerline');
+    const outOfBand = resolveSnap(p(3.4, 2.3), targets, { radius: 0.05 });
+    expect(outOfBand.kind).toBe('grid');
   });
   it('正交锁定只接受锁定轴一致的目标，网格也只吸附自由坐标', () => {
     const lock = { axis: 'y' as const, value: 0 };
     const onLine = resolveSnap(p(4.2, 0), targets, { lock });
     expect(onLine.kind).toBe('centerline');
     expect(onLine.point).toEqual(p(4.2, 0));
-    const boundaryOnAxis = resolveSnap(p(10.1, 2), targets, { lock: { axis: 'y', value: 2 } });
-    expect(boundaryOnAxis.kind).toBe('boundary-corner');
-    expect(boundaryOnAxis.point).toEqual(p(10, 2));
     // 锁定轴与所有目标都不一致时只吸附自由坐标
     const incompatible = resolveSnap(p(5, 2.9), targets, { lock: { axis: 'y', value: 3 } });
     expect(incompatible.kind).toBe('grid');
@@ -215,7 +225,7 @@ describe('M5 相邻基槽吸附', () => {
   });
   it('吸附提示可读', () => {
     expect(snapLabel(resolveSnap(p(-0.1, 0.1), targets))).toBe('吸附到 trench-1 端点');
-    expect(snapLabel(resolveSnap(p(5, 1.2), targets))).toBe('吸附到 trench-1 槽顶边界');
+    expect(snapLabel(resolveSnap(p(5, 1.2), targets))).toBe('吸附到 trench-1 中心线');
     expect(snapLabel(resolveSnap(p(30.2, 30.7), targets))).toBe('吸附到 1m 网格');
     expect(snapLabel(resolveSnap(p(30.2, 30.7), targets, { grid: false }))).toBe('自由坐标（无吸附）');
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Mesh, Raycaster, Vector3 } from 'three';
+import { Line, Mesh, Raycaster, Vector3 } from 'three';
 import type { MeshStandardMaterial } from 'three';
 import { buildTrench, trenchOutlines } from '../src/core/geometry/trench';
 import { emptyProject } from '../src/core/model/project';
@@ -188,8 +188,10 @@ describe('M3 命令原子性与场景接入', () => {
       ground.root.updateMatrixWorld(true); meshes.root.updateMatrixWorld(true);
       const drop = (x: number, y: number): Raycaster => new Raycaster(new Vector3(x, y, 10), new Vector3(0, 0, -1));
       expect(drop(10, 0).intersectObject(ground.ground)).toHaveLength(0);
-      expect(meshes.root.children.map(child => child.name)).toEqual(['t1']);
-      expect(drop(10, 0).intersectObject(meshes.root)[0]?.point.z).toBeCloseTo(-2);
+      const surfaces = meshes.root.children.filter(child => child instanceof Mesh);
+      expect(surfaces.map(child => child.name)).toEqual(['t1']);
+      // 中心线在 z=0.02，这里只对实体面求交
+      expect(drop(10, 0).intersectObjects(surfaces, false)[0]?.point.z).toBeCloseTo(-2);
       for (const [x, y] of [[10, 20], [-5, 0], [25, 0], [10, 2.5]] as const) expect(drop(x, y).intersectObject(ground.ground).length).toBeGreaterThan(0);
       const grid = ground.grid.geometry.getAttribute('position');
       for (let i = 0; i < grid.count; i += 2) {
@@ -223,9 +225,33 @@ describe('M3 命令原子性与场景接入', () => {
     const meshes = new ExcavationMeshes(snapshot.elements);
     try {
       expect(meshes.holes).toHaveLength(2);
+      const surfaces = meshes.root.children.filter(child => child instanceof Mesh);
       const raycaster = new Raycaster(new Vector3(0, 6, 10), new Vector3(0, 0, -1));
       meshes.root.updateMatrixWorld(true);
-      expect(raycaster.intersectObject(meshes.root)[0]?.point.z).toBeCloseTo(-2);
+      expect(raycaster.intersectObjects(surfaces, false)[0]?.point.z).toBeCloseTo(-2);
     } finally { meshes.dispose(); }
+  });
+  it('基槽中心线常显在 3D 视图，选中时高亮', () => {
+    const meshes = new ExcavationMeshes([trench(), trench({ id: 't2', points: [{ x: 0, y: 20 }, { x: 20, y: 20 }] })]);
+    try {
+      const lines = meshes.root.children.filter((child): child is Line => child instanceof Line);
+      expect(lines.map(line => line.name)).toEqual(['t1:centerline', 't2:centerline']);
+      // 常显颜色一致，且略微抬高避免与地面共面闪烁
+      expect(meshes.centerlineColors()).toEqual({ t1: '#8fa396', t2: '#8fa396' });
+      expect(lines[0]!.geometry.getAttribute('position').getZ(0)).toBeCloseTo(0.02);
+      expect(lines[0]!.geometry.getAttribute('position').count).toBe(2);
+      meshes.setSelected('t2');
+      expect(meshes.selectedCenterlineId).toBe('t2');
+      expect(meshes.centerlineColors()).toEqual({ t1: '#8fa396', t2: '#ffc266' });
+      meshes.setSelected(null);
+      expect(meshes.centerlineColors().t2).toBe('#8fa396');
+      // 环形基槽的中心线是闭合环（末点即首点，不重复追加）
+      const ring = new ExcavationMeshes([trench({ id: 'r1', points: [{ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 10, y: 10 }, { x: 0, y: 10 }, { x: 0, y: 0 }] })]);
+      try {
+        const loop = ring.root.children.find((child): child is Line => child instanceof Line);
+        expect(loop?.geometry.getAttribute('position').count).toBe(5);
+      } finally { ring.dispose(); }
+    } finally { meshes.dispose(); }
+    expect(meshes.root.children).toHaveLength(0);
   });
 });
