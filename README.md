@@ -2,7 +2,7 @@
 
 用于理解平面布置、底部尺寸、开挖深度、放坡参数与三维形态/预计土方量之间的关系。目标是在 Windows 10/11 完全离线运行；最终通过 Electron 分发 Portable 应用。
 
-**当前完成 M5：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑、长度/角度精确输入、1m 网格吸附与开关、快捷键焦点保护；几何仍由 M2–M4 的校验与实体构建，重叠一律拒绝并保留旧模型。保留 M1 四视角和镜头控制；选择/拖动编辑、计算、保存和 EXE 尚未实现。**
+**当前完成 M6：在 M5 俯视绘制与吸附之上，补上画布点选、选中高亮（实体+中心线）与拖动编辑（阈值 3px、拖动中只出预览、松手提交一次）。绘制能力包含环形基槽（中心线首尾闭合，外圈开口、内圈为岛）、岛内继续开槽、按相邻槽顶边界自动收边使多条基槽相互贯通、中心线在 2D/3D 常显。几何与校验来自 M2–M4 并已扩展到 M5/M6 的收边与贯通；重叠仍一律拒绝并保留旧模型（贯通处靠共边接触与端面省略实现连通，不做实体布尔并集）。保留 M1 四视角和镜头控制；土方量计算（M7）、保存与历史（M8）、EXE（M10）尚未实现。当前 10 个测试文件 150 项测试，`npm run check` 全绿。**
 
 ## 快速开始
 
@@ -37,7 +37,7 @@ npm run dev
 
 ## 文档与执行入口
 
-- [原始需求](PROJECT_SPEC.txt)：保留用户原文。
+- [原始需求](PROJECT_SPEC.md)：保留用户原文（Markdown 版，取代早期的 `PROJECT_SPEC.txt`）。
 - [技术校核与详细设计](docs/TECHNICAL_DESIGN.md)：技术风险修正、数学推导、模块协议、数值边界、几何/交互/文件设计和官方依据。
 - [逐阶段实施手册](docs/MILESTONE_PLAYBOOK.md)：M0–M10 的顺序任务、文件/函数入口、具体验收用例、完成门槛和后续请求模板。
 - [M0 验证报告](docs/M0_REPORT.md)：本轮完成范围、工具版本、实际测试结果和已知限制。
@@ -49,7 +49,7 @@ npm run dev
 - [M6 验证报告](docs/M6_REPORT.md)：画布点选、选中高亮与拖动编辑（阈值 3px、拖动中只出预览、松手提交一次）。
 - [仓库铁律](AGENTS.md)：改动需要相关测试和 Git commit。
 
-后续执行 M6 时，先阅读设计的输入状态机与拖动合同及手册 M6 章节，不因原任务书末尾的历史指令重新初始化项目。
+后续执行 M7（土方量、结果显示与两点距离测量）时，先阅读设计的计算公式章节与手册 M7 章节，不因原任务书末尾的历史指令重新初始化项目。
 
 ### M6 操作
 
@@ -86,23 +86,32 @@ npm run dev
 ```text
 src/
   main.tsx                 React 挂载入口
-  app/                     应用组装和样式
+  app/                     App.tsx 应用组装、styles.css 样式
   components/
-    TopBar/ ToolPanel/ PropertyPanel/ ViewControls/ dialogs/
+    SceneViewport.tsx      画布宿主：投影/吸附/绘制/点选/拖动的交互入口
+    DrawingPanel/          工具按钮、草稿读数、精确输入、失败提示
+    PropertyPanel/         按类型编辑已建对象（NumberFields/TrenchEditor/PitEditor）
+    ViewControls/          视角、显示模式、网格与吸附开关
+    TopBar/ ToolPanel/ dialogs/   后续阶段占位（空目录）
   core/
-    model/ geometry/ calculation/ validation/ commands/ io/
-  scene/                   相机、控制器、绘制状态与预览、基坑/基槽 Mesh、带孔地面与资源管理
-  store/                   ProjectStore 原子命令入口；M8 扩展历史
-tests/                     Vitest 测试和 DOM 初始化
+    model/                 Project / 元素 / Point2 类型与默认值
+    geometry/              offset、join、坑槽几何、吸附目标、收边（trenchTrim）
+    validation/            数值、折线、多边形、工程校验与开口冲突
+    calculation/ commands/ io/    后续阶段占位（空目录）
+  scene/                   SceneManager（唯一持有 Three 对象）、CameraManager、
+                           GroundManager（带孔地面与岛补片）、MeshFactory、PreviewLine、
+                           DrawingManager（绘制状态机）、groundPointer、runtimeInfo
+  store/                   ProjectStore：校验 + 准备 + 原子提交（含新建基槽自动收边）
+tests/                     Vitest 测试（含 scene-test-kit 假渲染器）与 DOM 初始化
 scripts/smoke.mjs          实际启动开发/预览服务器的 HTTP 验证
-docs/                      校核、实施手册、阶段报告
+docs/                      校核、实施手册与 M0–M6 阶段报告
 electron/                  M10 占位说明，无 Electron 依赖或实现
 ```
 
-空目录由 `.gitkeep` 纳入版本控制。业务数据和数学计算不依赖 React/Three；复杂几何不放入组件；SceneManager 从 M1 统一拥有 Three 对象与资源生命周期。
+只有仍为空的占位目录用 `.gitkeep` 纳入版本控制；已有真实文件的目录不再保留 `.gitkeep`。业务数据和数学计算不依赖 React/Three；复杂几何不放入组件；SceneManager 从 M1 统一拥有 Three 对象与资源生命周期。
 
 ## 当前技术决策
 
-保留原技术栈。校正一般矩形基坑体积公式；采用 XY 地面、Z 向上；基槽端面垂直；M2 起用二维地面孔洞显示开挖；M3 直线基槽与三类基坑共用同一个“底面+侧面环”实体构建器与同一套开口冲突判定；M4 起 2～200 节点折线按 miter 生成（比率上限 4），折返、中心线自交与偏移自交一律拒绝；M5 起在俯视正交视图中按画布 rect 投影、默认吸附 1m 网格，草稿不进入项目数据，并可用贴合线/端点吸附做闭合连接；基槽之间允许边界接触而内部交叠仍拒绝，基坑之间保持重叠、包含、相切都拒绝，仍然不做实体 CSG。具体理由和数值测试见设计文档。
+保留原技术栈。校正一般矩形基坑体积公式；采用 XY 地面、Z 向上；基槽端面垂直；M2 起用二维地面孔洞显示开挖；M3 直线基槽与三类基坑共用同一个“底面+侧面环”实体构建器与同一套开口冲突判定；M4 起 2～200 节点折线按 miter 生成（比率上限 4），折返、中心线自交与偏移自交一律拒绝；M5 起在俯视正交视图中按画布 rect 投影、默认吸附 1m 网格，草稿不进入项目数据，中心线可吸附回自身起点闭合成环形基槽（外圈开口 + 内圈岛，地面用共面补片补回），并按相邻槽顶边界自动收边让多条基槽相互贯通（收边留 10nm 缝隙以稳定三角化）；M6 起支持画布点选与拖动编辑（拖动只出预览、释放提交一次、3px 阈值）。基槽之间允许边界接触而内部交叠仍拒绝（岛内允许继续开挖，只有整条中心线压在相邻槽带里才判为重复开挖），基坑之间保持重叠、包含、相切都拒绝，仍然不做实体 CSG 或布尔并集。具体理由和数值测试见设计文档。
 
-运行时使用系统字体及本地依赖，没有在线字体/贴图/CDN。M1–M5 已做真实浏览器 WebGL 与鼠标/键盘验收；当前测试不证明 Windows EXE、专业工程量或放坡安全性。构建仍有 Three 主包超过500kB的非阻塞体积提醒，未通过提高阈值隐藏。
+运行时使用系统字体及本地依赖，没有在线字体/贴图/CDN。M1–M6 已做真实浏览器 WebGL 与鼠标/键盘验收；当前测试不证明 Windows EXE、专业工程量或放坡安全性。构建仍有 Three 主包超过500kB的非阻塞体积提醒，未通过提高阈值隐藏。

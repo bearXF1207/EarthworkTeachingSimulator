@@ -14,7 +14,7 @@
 
 ## 2. 关键校核结论
 
-原技术栈可继续使用；已在执行设计中纠正/补齐以下问题，原始 `PROJECT_SPEC.txt` 保留原文：
+原技术栈可继续使用；已在执行设计中纠正/补齐以下问题，原始需求见根目录 `PROJECT_SPEC.md`（早期的 `PROJECT_SPEC.txt` 已被取代并移除）：
 
 1. 一般矩形基坑的上下矩形不相似，不能通用原棱台公式。正确公式为 `LWH+m(L+W)H²+(4/3)m²H³`；L=10/W=4/H=2/m=.5 得110.6666666667m³。
 2. 完整不透明地面会遮住地下模型。M2 起采用二维开口三角化，并同步处理网格，不引入实体 CSG。
@@ -36,10 +36,10 @@
 | 运行入口 | `index.html`、`src/main.tsx`、`src/app/App.tsx`、`src/app/styles.css` |
 | Three 集成 | `src/scene/runtimeInfo.ts`，只读取包版本，无场景实例 |
 | 自动化验证 | `tests/setup.ts`、`tests/app.test.tsx`、`tests/three-integration.test.ts`、`scripts/smoke.mjs` |
-| 后续目录 | `src/components/{TopBar,ToolPanel,PropertyPanel,ViewControls,dialogs}`、`src/core/{model,geometry,calculation,validation,commands,io}`、`src/store`，空目录由 `.gitkeep` 跟踪 |
+| 后续目录 | `src/components/{TopBar,ToolPanel,PropertyPanel,ViewControls,dialogs}`、`src/core/{model,geometry,calculation,validation,commands,io}`、`src/store`，空目录由 `.gitkeep` 跟踪（2026-09-23 整理时，已写入实现的目录不再保留 `.gitkeep`）|
 | 文档 | `README.md`、`docs/TECHNICAL_DESIGN.md`、`docs/MILESTONE_PLAYBOOK.md`、本报告、`electron/README.md` |
 
-`AGENTS.md` 沿用现有铁律。`dist/`、`node_modules/` 和本地缓存不纳入 Git。工作区中后来出现的 `PROJECT_SPEC.md` 不属于本轮生成文件，保留原状，不随 M0 提交。
+`AGENTS.md` 沿用现有铁律。`dist/`、`node_modules/` 和本地缓存不纳入 Git。`PROJECT_SPEC.md` 原为工作区未跟踪文件，2026-09-23 工程整理时纳入版本库并取代 `PROJECT_SPEC.txt`。
 
 ## 4. 工具链与依赖
 

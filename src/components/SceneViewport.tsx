@@ -356,6 +356,6 @@ export function SceneViewport(): ReactElement {
       <button onClick={() => { if (dispatch({ type: 'delete', id: active.id }).ok) setSelected(''); }}>删除当前{active.type === 'trench' ? '基槽' : '基坑'}</button>
     </fieldset>}
     {error && <p role="alert" className="input-error">{error}</p>}
-    <p className="scope-note">M5：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置基坑，中心线与坑心按开关吸附 1m 网格。输入框内 Enter 只提交输入段。体积计算与文件保存尚未实现。</p>
+    <p className="scope-note">M6：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑，画布点选与拖动编辑；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。土方量计算与文件保存尚未实现。</p>
   </aside></>;
 }
