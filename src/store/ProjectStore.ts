@@ -1,9 +1,9 @@
 import { emptyProject } from '../core/model/project';
-import type { Pit, Project, Result } from '../core/model/project';
+import type { ExcavationElement, Project, Result } from '../core/model/project';
 import { validateProject } from '../core/validation/project';
 
-export type Command = { type: 'add'; element: Pit } | { type: 'update'; element: Pit } | { type: 'delete'; id: string } |
-  { type: 'grid'; visible: boolean };
+export type Command = { type: 'add'; element: ExcavationElement } | { type: 'update'; element: ExcavationElement } |
+  { type: 'delete'; id: string } | { type: 'grid'; visible: boolean };
 export type Prepared = { commit: () => void; dispose: () => void };
 export class ProjectStore {
   private project = emptyProject();

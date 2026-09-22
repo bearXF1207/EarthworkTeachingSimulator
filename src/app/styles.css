@@ -49,12 +49,12 @@ button:disabled, select:disabled { opacity: .5; cursor: not-allowed; }
 .scene-status { padding: 6px 16px; }
 .scene-status[role="alert"] { color: #f1c785; }
 .scene-help { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; padding: 12px 16px; }
-.create-pits { display: grid; gap: 8px; margin-bottom: 20px; }
+.create-elements { display: grid; gap: 8px; margin-bottom: 20px; }
 .next-stage { padding: 20px; }
 .next-stage label { display: grid; gap: 4px; font-size: 13px; margin: 10px 0; }
 .next-stage select { width: 100%; min-width: 0; }
-.pit-editor input { width: 100%; padding: 7px 10px; border: 1px solid #596b59; border-radius: 4px; background: #17231f; color: #e4ece5; font: inherit; }
-.pit-editor h3 { font-size: 16px; }
+.object-editor input { width: 100%; padding: 7px 10px; border: 1px solid #596b59; border-radius: 4px; background: #17231f; color: #e4ece5; font: inherit; }
+.object-editor h3 { font-size: 16px; }
 fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .input-error { color: #ffc093; font-size: 13px; overflow-wrap: anywhere; }
 @media (max-width: 800px) {

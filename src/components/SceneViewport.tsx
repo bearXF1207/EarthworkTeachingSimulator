@@ -7,10 +7,13 @@ import type { ViewMode } from '../scene/CameraManager';
 import { ViewControls } from './ViewControls/ViewControls';
 import { ProjectStore } from '../store/ProjectStore';
 import type { Command } from '../store/ProjectStore';
-import type { Pit, Project, Result } from '../core/model/project';
+import type { ExcavationElement, Pit, Project, Result, Trench } from '../core/model/project';
 import type { DisplayMode } from '../scene/SceneManager';
 import { PitEditor } from './PropertyPanel/PitEditor';
+import { TrenchEditor } from './PropertyPanel/TrenchEditor';
 import { PIT_LABELS } from '../core/model/project';
+
+const TRENCH_LABEL = '直线基槽';
 
 export function SceneViewport(): ReactElement {
   const host = useRef<HTMLDivElement>(null);
@@ -19,6 +22,7 @@ export function SceneViewport(): ReactElement {
   const [project, setProject] = useState(() => store.getSnapshot());
   const [selected, setSelected] = useState('');
   const serial = useRef(0);
+  const trenchSerial = useRef(0);
   const [error, setError] = useState('');
   const [displayMode, setDisplayMode] = useState<DisplayMode>('solid');
   const [view, setView] = useState<ViewMode>('free');
@@ -57,6 +61,15 @@ export function SceneViewport(): ReactElement {
       type === 'rect-pit' ? { ...base, type, bottomLength: 6, bottomWidth: 4, rotation: 0 } : { ...base, type, bottomDiameter: 4 };
     if (dispatch({ type: 'add', element }).ok) setSelected(element.id);
   }
+  // M3 演示入口：在基坑演示行下方按 10m 间距放置 20m 长的直线基槽；正式绘制交互留给 M5。
+  function addTrench(): void {
+    const index = trenchSerial.current++;
+    const y = -20 - index * 10;
+    const element: Trench = { id: `trench-${index + 1}`, type: 'trench', points: [{ x: -12, y }, { x: 8, y }],
+      bottomWidth: 2, depth: 2, slope: .5 };
+    if (dispatch({ type: 'add', element }).ok) setSelected(element.id);
+  }
+  function update(element: ExcavationElement): Result<Project> { return dispatch({ type: 'update', element }, false); }
 
   function changeView(next: ViewMode): void { manager.current?.setView(next); setView(next); }
   function changeGrid(visible: boolean): void {
@@ -68,25 +81,30 @@ export function SceneViewport(): ReactElement {
     setGeneration(value => value + 1);
   }
 
-  const activePit = project.elements.find(e => e.id === selected && e.type !== 'trench') as Pit | undefined;
+  const active = project.elements.find(e => e.id === selected);
   return <><section className="scene-panel" aria-label="基础三维场景">
-    <div className="scene-heading"><h2>施工场地</h2><span>{VIEW_LABELS[view]} · {project.elements.length} 个基坑 · 场地自动扩展</span></div>
+    <div className="scene-heading"><h2>施工场地</h2><span>{VIEW_LABELS[view]} · {project.elements.length} 个开挖对象 · 场地自动扩展</span></div>
     <div className="viewport" ref={host} />
     <div className="scene-status" role={status.ready ? 'status' : 'alert'}>{status.message}</div>
     <ViewControls view={view} grid={grid} ready={status.ready} onView={changeView} onGrid={changeGrid} onReset={() => manager.current?.resetCamera()}
       displayMode={displayMode} hasElements={project.elements.length > 0} onDisplayMode={mode => { manager.current?.setDisplayMode(mode); setDisplayMode(mode); }} />
     <div className="scene-help"><span>{view === 'free' ? '左键旋转 · 右键平移 · 滚轮缩放' : '左键或右键平移 · 滚轮缩放 · 正交视图锁定旋转'}<br />网格间距 1m · 坐标轴：X 红 / Y 绿 / Z 蓝</span>
       <button onClick={reload}>重新加载场景</button></div>
-  </section><aside className="next-stage" aria-label="基坑属性">
-    <h2>参数化基坑</h2>
-    <div className="create-pits">{(Object.keys(PIT_LABELS) as Pit['type'][]).map(type =>
-      <button key={type} disabled={!status.ready} onClick={() => add(type)}>添加{PIT_LABELS[type]}</button>)}</div>
+  </section><aside className="next-stage" aria-label="开挖对象属性">
+    <h2>参数化开挖对象</h2>
+    <div className="create-elements">
+      <button disabled={!status.ready} onClick={addTrench}>添加{TRENCH_LABEL}</button>
+      {(Object.keys(PIT_LABELS) as Pit['type'][]).map(type =>
+        <button key={type} disabled={!status.ready} onClick={() => add(type)}>添加{PIT_LABELS[type]}</button>)}</div>
     <label>当前对象<select aria-label="当前对象" value={selected} onChange={e => { setSelected(e.target.value); setError(''); }}>
-      <option value="">请选择对象</option>{project.elements.map(e => <option key={e.id} value={e.id}>{e.id} · {e.type !== 'trench' ? PIT_LABELS[e.type] : '基槽'}</option>)}
+      <option value="">请选择对象</option>{project.elements.map(e => <option key={e.id} value={e.id}>{e.id} · {e.type === 'trench' ? TRENCH_LABEL : PIT_LABELS[e.type]}</option>)}
     </select></label>
-    {activePit && <fieldset disabled={!status.ready}><PitEditor key={activePit.id} pit={activePit} onUpdate={element => dispatch({ type: 'update', element }, false)} />
-      <button onClick={() => { if (dispatch({ type: 'delete', id: activePit.id }).ok) setSelected(''); }}>删除当前基坑</button></fieldset>}
+    {active && <fieldset disabled={!status.ready}>
+      {active.type === 'trench' ? <TrenchEditor key={active.id} trench={active} onUpdate={update} />
+        : <PitEditor key={active.id} pit={active} onUpdate={update} />}
+      <button onClick={() => { if (dispatch({ type: 'delete', id: active.id }).ok) setSelected(''); }}>删除当前{active.type === 'trench' ? '基槽' : '基坑'}</button>
+    </fieldset>}
     {error && <p role="alert" className="input-error">{error}</p>}
-    <p className="scope-note">M2 演示入口：按预设位置添加，再编辑参数。顶部开口禁止重叠、包含或相切。正式鼠标绘制、体积计算和文件保存尚未实现。</p>
+    <p className="scope-note">M3 演示入口：按预设位置添加，再编辑参数。顶部开口禁止重叠、包含或相切。正式鼠标绘制、体积计算和文件保存尚未实现。</p>
   </aside></>;
 }

@@ -208,3 +208,42 @@ describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
     } finally { scene.dispose(); host.remove(); }
   });
 });
+
+describe('M3 直线基槽界面', () => {
+  it('创建基槽、编辑节点与截面参数、拒绝非法输入并删除', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '添加直线基槽' }));
+    const depth = screen.getByRole('textbox', { name: '开挖深度（m）' });
+    expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toHaveValue('-12');
+    expect(screen.getByRole('textbox', { name: '底宽（m）' })).toHaveValue('2');
+    fireEvent.change(depth, { target: { value: '3' } });
+    const accepted = dispatch.mock.results.at(-1)?.value;
+    expect(accepted.ok).toBe(true);
+    expect(accepted.value.elements[0].depth).toBe(3);
+    fireEvent.change(depth, { target: { value: '' } });
+    expect(dispatch.mock.results.at(-1)?.value).toBe(accepted);
+    expect(depth).toHaveValue('');
+    fireEvent.change(depth, { target: { value: '3' } });
+    fireEvent.change(screen.getByRole('textbox', { name: '终点 X（m）' }), { target: { value: '-12' } });
+    expect(dispatch.mock.results.at(-1)?.value.ok).toBe(false);
+    expect(screen.getByRole('alert')).toHaveTextContent('中心线长度必须大于');
+    fireEvent.change(screen.getByRole('textbox', { name: '终点 X（m）' }), { target: { value: '8' } });
+    expect(dispatch.mock.results.at(-1)?.value.ok).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '删除当前基槽' }));
+    expect(dispatch.mock.results.at(-1)?.value.value.elements).toHaveLength(0);
+    expect(screen.queryByRole('textbox', { name: '起点 X（m）' })).not.toBeInTheDocument();
+    expect(FakeRenderer.active.size).toBe(1);
+  });
+
+  it('基槽与基坑可共存，选中对象切换时属性面板同步', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '添加方形基坑' }));
+    fireEvent.click(screen.getByRole('button', { name: '添加直线基槽' }));
+    expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toBeVisible();
+    fireEvent.change(screen.getByRole('combobox', { name: '当前对象' }), { target: { value: 'pit-1' } });
+    expect(screen.getByRole('textbox', { name: '底边长（m）' })).toHaveValue('4');
+    expect(screen.queryByRole('textbox', { name: '起点 X（m）' })).not.toBeInTheDocument();
+    expect(screen.getByText(/2 个开挖对象/)).toBeVisible();
+  });
+});

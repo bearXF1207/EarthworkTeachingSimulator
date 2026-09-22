@@ -5,7 +5,7 @@ import { emptyProject } from '../src/core/model/project';
 import type { Pit, SquarePit } from '../src/core/model/project';
 import { openingsConflict, validateProject } from '../src/core/validation/project';
 import { GroundManager } from '../src/scene/GroundManager';
-import { PitMeshes } from '../src/scene/MeshFactory';
+import { ExcavationMeshes } from '../src/scene/MeshFactory';
 import { ProjectStore } from '../src/store/ProjectStore';
 
 const square: SquarePit = { id: 'a', type: 'square-pit', position: { x: 0, y: 0 }, depth: 2, slope: .5, bottomSize: 4, rotation: 0 };
@@ -40,7 +40,7 @@ describe('M2 几何与开口', () => {
     } finally { built.geometry.dispose(); }
   });
   it('地面真开孔、坑底 FrontSide 可命中、网格不横跨坑口；删除恢复地面', () => {
-    const ground = new GroundManager([outline(square, true)]), pits = new PitMeshes([square]);
+    const ground = new GroundManager([outline(square, true)]), pits = new ExcavationMeshes([square]);
     const ray = new Raycaster(new Vector3(0, 0, 10), new Vector3(0, 0, -1));
     try {
       ground.root.updateMatrixWorld(true); pits.root.updateMatrixWorld(true);
@@ -90,10 +90,10 @@ describe('M2 参数与冲突校验', () => {
     expect(result.ok).toBe(true);
     if (result.ok) { expect((result.value.elements[0] as SquarePit).rotation).toBe(270); expect(JSON.parse(JSON.stringify(result.value))).toEqual(result.value); }
   });
-  it('拒绝越界、重复ID、维度为零、过量对象和未实现基槽', () => {
+  it('拒绝越界、重复ID、维度为零、过量对象和未知类型', () => {
     for (const project of [projectWith({ ...square, position: { x: 9999, y: 0 } }), projectWith(square, square),
       projectWith({ ...square, bottomSize: 0 }), { ...emptyProject(), elements: Array(501).fill(square) },
-      { ...emptyProject(), elements: [{ ...square, type: 'trench' }] }, { ...emptyProject(), settings: null }]) expect(validateProject(project).ok).toBe(false);
+      { ...emptyProject(), elements: [{ ...square, type: 'curved-trench' }] }, { ...emptyProject(), settings: null }]) expect(validateProject(project).ok).toBe(false);
   });
   it.each([[7, false], [6, true], [5, true], [0, true]] as const)('方坑间距%s 冲突=%s', (x, expected) => {
     expect(openingsConflict(square, { ...square, id: 'b', position: { x, y: 0 } })).toBe(expected);
