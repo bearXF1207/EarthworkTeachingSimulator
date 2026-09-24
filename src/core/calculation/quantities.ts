@@ -2,6 +2,7 @@ import type { ExcavationElement } from '../model/project';
 import { pitBottomArea, pitBottomSize, pitTopSize, pitVolume } from './pitVolume';
 import { polylineLength } from './measurement';
 import { trenchSectionArea, trenchTopWidth, trenchVolume } from './trenchVolume';
+import { buildTrenchNetwork } from '../geometry/trenchNetwork';
 
 /**
  * M7 工程量汇总：把纯数值计算整理成界面可直接展示的读数。
@@ -44,11 +45,17 @@ export function quantityOf(element: ExcavationElement): Quantity {
 
 /**
  * 全项目合计（m³）：只对已通过校验并进入工程的元素求和，草稿与临时测量不计入。
- * 单个元素无法计算时跳过；不宣称支持相交开挖的合并计量。
+ * 单个元素无法计算时跳过；连接处以显示同源的并集几何增量修正，不重复计入已有槽体。
  */
 export function totalVolume(elements: ExcavationElement[]): number {
   return elements.reduce((sum, element) => {
     const volume = quantityOf(element).volume;
     return finite(volume) ? sum + volume : sum;
-  }, 0);
+  }, 0) + connectionCorrection(elements);
+}
+
+/** 单槽读数保持原设计断面估算；连接新增的开挖在工程合计中单独列出。 */
+export function connectionCorrection(elements: ExcavationElement[]): number {
+  const computable = elements.filter(e => e.type === 'trench' && trenchVolume(e) !== null);
+  return buildTrenchNetwork(computable).correction;
 }

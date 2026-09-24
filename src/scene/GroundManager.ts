@@ -1,9 +1,7 @@
-import { AxesHelper, BufferGeometry, DoubleSide, Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Mesh, MeshStandardMaterial, ShapeUtils, Vector2 } from 'three';
+import { AxesHelper, BufferGeometry, DoubleSide, Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Mesh, MeshStandardMaterial } from 'three';
 import type { Point2 } from '../core/model/project';
 import { edgesProperlyCross, inside } from '../core/geometry/polygon';
-
-/** 视作退化的地面三角形面积上限（m²）：亚微米级碎片不计入面积，也不生成面片。 */
-const DEGENERATE_GROUND_AREA = 1e-9;
+import { triangulateGround } from './groundTriangulation';
 
 /** 该环是否整体落在岛内（含贴边、无真交叉）：用于把岛内开挖从岛面中挖掉。 */
 function insideIslandRing(ring: Point2[], island: Point2[]): boolean {
@@ -23,31 +21,15 @@ export class GroundManager {
       minX = Math.min(minX, Math.floor(p.x - 10)); maxX = Math.max(maxX, Math.ceil(p.x + 10));
       minY = Math.min(minY, Math.floor(p.y - 10)); maxY = Math.max(maxY, Math.ceil(p.y + 10));
     }
-    const outer = [new Vector2(minX, minY), new Vector2(minX, maxY), new Vector2(maxX, maxY), new Vector2(maxX, minY)];
+    const outer = [{ x: minX, y: minY }, { x: minX, y: maxY }, { x: maxX, y: maxY }, { x: maxX, y: minY }];
     // 岛内开挖（例如环形基槽岛内的基槽）不能作为主地面的孔洞：earcut 不支持嵌套孔洞，
     // 这些孔洞只从对应的岛面里挖掉，主地面只保留顶层开口。
     const nestedInIsland = (ring: Point2[]): boolean => islandRings.some(island => insideIslandRing(ring, island));
     const topHoles = holes.filter(ring => !nestedInIsland(ring));
-    const rings = topHoles.map(ring => ring.map(p => new Vector2(p.x, p.y)));
-    const triangles = ShapeUtils.triangulateShape(outer, rings);
-    const points = [...outer, ...rings.flat()];
-    const expectedArea = (maxX - minX) * (maxY - minY) - rings.reduce((sum, ring) => sum + Math.abs(ShapeUtils.area(ring)), 0);
-    let actualArea = 0;
-    const positions: number[] = [];
-    for (const triangle of triangles) {
-      const vertices = triangle.map(index => points[index]!);
-      const area = Math.abs(ShapeUtils.area(vertices));
-      if (!Number.isFinite(area)) throw new Error('Invalid ground triangle');
-      // 孔洞共边或近乎相切时 earcut 会产出面积趋于 0 的碎片三角形，按退化处理跳过；
-      // 真正的三角化错误仍由下面的总面积守卫拦下。
-      if (area <= DEGENERATE_GROUND_AREA) continue;
-      actualArea += area;
-      for (const p of vertices) positions.push(p.x, p.y, 0);
-    }
-    const areaError = Math.abs(actualArea - expectedArea);
-    if (areaError > Math.max(1e-6, expectedArea * 1e-10)) {
-      throw new Error(`Incomplete ground triangulation: actual ${actualArea} vs expected ${expectedArea}`);
-    }
+    const positions = triangulateGround(outer, topHoles);
+    // 所有面积校验先于 GPU 资源分配，岛面失败也不会泄漏已创建的主地面/网格。
+    const islandPositions = islandRings.map(ring => triangulateGround(ring,
+      holes.filter(hole => insideIslandRing(hole, ring)), 'island'));
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3)); geometry.computeVertexNormals();
     this.ground = new Mesh(geometry, new MeshStandardMaterial({ color: 0x7d8060, roughness: 1, side: DoubleSide }));
@@ -84,8 +66,8 @@ export class GroundManager {
     this.root.name = 'ground'; this.grid.position.z = .015; this.axes.position.z = .03;
     this.root.add(this.ground, this.grid, this.axes);
     // 环形基槽的岛：外圈被切成孔洞，岛上原地面用一块共面补片补回（网格线不跨越岛，属于已知简化）。
-    for (const ring of islandRings) {
-      const patch = this.buildIsland(ring, holes);
+    for (const patchPositions of islandPositions) {
+      const patch = this.buildIsland(patchPositions);
       if (!patch) continue;
       this.islands.push(patch);
       this.root.add(patch);
@@ -96,19 +78,7 @@ export class GroundManager {
    * 岛内还可能有独立开挖（例如环形基槽岛内的基槽），这些孔洞要从岛面里一并挖掉，
    * 使岛内的沟槽能真正开在岛上；贴边接触也视为落在岛内。
    */
-  private buildIsland(ring: Point2[], holes: Point2[][]): Mesh<BufferGeometry, MeshStandardMaterial> | null {
-    const shape = ring.map(p => new Vector2(p.x, p.y));
-    const inner = holes.filter(hole => insideIslandRing(hole, ring));
-    const innerShapes = inner.map(hole => hole.map(p => new Vector2(p.x, p.y)));
-    const triangles = ShapeUtils.triangulateShape(shape, innerShapes);
-    const points = [...shape, ...innerShapes.flat()];
-    const positions: number[] = [];
-    for (const triangle of triangles) {
-      const vertices = triangle.map(index => points[index]!);
-      const area = Math.abs(ShapeUtils.area(vertices));
-      if (!Number.isFinite(area) || area <= DEGENERATE_GROUND_AREA) continue;
-      for (const p of vertices) positions.push(p.x, p.y, 0);
-    }
+  private buildIsland(positions: number[]): Mesh<BufferGeometry, MeshStandardMaterial> | null {
     if (!positions.length) return null;
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));

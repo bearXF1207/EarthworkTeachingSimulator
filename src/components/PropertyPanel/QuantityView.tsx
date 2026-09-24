@@ -17,6 +17,7 @@ export function QuantityView({ element, title }: { element: ExcavationElement; t
       {rows.map(row => <div key={row.label}><dt>{row.label}</dt><dd>{format(row.value)} {row.unit}</dd></div>)}
       <div className="quantity-total"><dt>预计土方量</dt><dd>{volume === null ? '—' : `${format(volume)} m³`}</dd></div>
     </dl>
+    {element.type === 'trench' && <p className="scope-note">此处为单槽设计估算，不含连接处补充开挖；连接修正单独计入工程合计。</p>}
     <p className="scope-note">按设计几何解析计算，仅用于教学演示；不是工程计价、放坡安全建议或松方/压实方换算。</p>
   </div>;
 }

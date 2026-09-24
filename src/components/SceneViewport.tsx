@@ -22,7 +22,7 @@ import { PitEditor } from './PropertyPanel/PitEditor';
 import { TrenchEditor } from './PropertyPanel/TrenchEditor';
 import { QuantityView } from './PropertyPanel/QuantityView';
 import { distance } from '../core/calculation/measurement';
-import { totalVolume } from '../core/calculation/quantities';
+import { connectionCorrection, totalVolume } from '../core/calculation/quantities';
 
 const TRENCH_LABEL = '直线基槽';
 const POLYLINE_LABEL = '折线基槽';
@@ -395,9 +395,10 @@ export function SceneViewport(): ReactElement {
     <section className="quantity-summary" aria-label="工程量合计">
       <h3>工程量合计</h3>
       <p><strong>预计土方量合计 {totalVolume(project.elements).toFixed(2)} m³</strong></p>
-      <p className="scope-note">只对已通过校验的对象求和；草稿与临时测量不计入，也不合并相交开挖的工程量。</p>
+      <p>其中连接补充开挖 {connectionCorrection(project.elements).toFixed(2)} m³</p>
+      <p className="scope-note">单槽估算之和加连接修正。连接增量按显示同源的合并几何计算，不重复计入已有开挖；草稿与临时测量不计入。不同深度接口保留高差台阶。</p>
     </section>
     {error && <p role="alert" className="input-error">{error}</p>}
-    <p className="scope-note">M7：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑，画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。预计土方量按解析公式计算，文件保存与撤销历史尚未实现。</p>
+    <p className="scope-note">M7：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑，画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。单槽土方量按解析公式估算，连接补挖按合并几何修正；文件保存与撤销历史尚未实现。</p>
   </aside></>;
 }

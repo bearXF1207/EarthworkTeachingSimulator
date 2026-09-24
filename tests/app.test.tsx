@@ -435,6 +435,10 @@ describe('M5 俯视绘制与放置', () => {
     expect(points[0]!.y).toBeCloseTo(2, 6);
     expect(points[1]).toEqual({ x: 10, y: 12 });
     expect(screen.getByText(/2 个开挖对象/)).toBeVisible();
+    const summary = screen.getByRole('region', { name: '工程量合计' });
+    expect(summary).toHaveTextContent('预计土方量合计 182.67 m³');
+    expect(summary).toHaveTextContent('其中连接补充开挖 2.67 m³');
+    expect(screen.getByText(/此处为单槽设计估算，不含连接处补充开挖/)).toBeVisible();
   });
 
   it('吸附到相邻基槽端点，端点对接只共边不交叠', () => {

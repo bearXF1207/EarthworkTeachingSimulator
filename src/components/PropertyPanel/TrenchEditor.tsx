@@ -23,6 +23,6 @@ export function TrenchEditor({ trench, onUpdate }: { trench: Trench; onUpdate: (
     <NumberFields fields={fields} apply={values => onUpdate({ ...trench,
       bottomWidth: values.bottomWidth!, depth: values.depth!, slope: values.slope!,
       points: trench.points.map((_, i) => ({ x: values[`x${i}`]!, y: values[`y${i}`]! })) })} />
-    <p className="scope-note">{trench.points.length} 个节点{isClosedRing(trench.points) ? '（首尾闭合，环形基槽）' : ''}、整槽统一截面；内部转角取相邻偏移线的 miter 交点，端面垂直（与相邻开挖贯通时省略该端端面），边坡水平外扩 = 深度 × 放坡系数。折返、自交、miter 比超过 4 或槽宽贴近自身都会被拒绝。</p>
+    <p className="scope-note">{trench.points.length} 个节点{isClosedRing(trench.points) ? '（首尾闭合，环形基槽）' : ''}、整槽统一截面；内部转角取相邻偏移线的 miter 交点。完整贴合的端部派生补充开挖、裁除内部墙；不同深度保留台阶，未连接端面垂直。边坡水平外扩 = 深度 × 放坡系数。折返、自交、miter 比超过 4 或槽宽贴近自身都会被拒绝。</p>
   </div>;
 }
