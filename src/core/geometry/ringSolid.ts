@@ -27,8 +27,7 @@ export function buildRingSolid(bottom: Point2[], top: Point2[], bottomZ: number,
   // 非索引几何的材质组按顶点序号划分。
   const bottomVertexCount = positions.length / 3;
   if (!bottomVertexCount) throw new Error('开挖底面三角化失败');
-  // Never omit a standalone wall based only on z=0 contact. True connections
-  // need derived excavation and internal-face clipping in trenchNetwork.
+  // 不能只凭 z=0 处的接触就删掉独立的墙：真实贯通依赖 trenchNetwork 的派生开挖与内部面裁剪。
   for (let i = 0; i < bottom.length; i++) {
     const j = (i + 1) % bottom.length;
     const b = bottom[i]!, bn = bottom[j]!, t = top[i]!, tn = top[j]!;
@@ -57,7 +56,7 @@ function pushWall(positions: number[], inner: Point2[], outer: Point2[], bottomZ
 }
 
 /**
- * 环形开挖实体（首尾闭合基槽）：底部为“外圈减内圈”的环形面，外圈与内圈各生成一圈侧面。
+ * 环形开挖实体（首尾闭合基槽）：底部为"外圈减内圈"的环形面，外圈与内圈各生成一圈侧面。
  * 外圈逆时针时侧面朝向槽内；内圈反向遍历，侧面因此背向岛、同样朝向槽内。
  */
 export function buildAnnularSolid(
@@ -68,7 +67,7 @@ export function buildAnnularSolid(
   if (bottomHole.length < 3 || bottomHole.length !== topHole.length) throw new Error('环形基槽内圈点数不足或顶底不匹配');
   const positions: number[] = [];
   const vertex = (p: Point2, z: number): void => { positions.push(p.x, p.y, z); };
-  // earcut 的三角形索引指向“外圈 + 内圈”拼接后的点表，必须先拼好再取值。
+  // earcut 的三角形索引指向"外圈 + 内圈"拼接后的点表，必须先拼好再取值。
   const combined = [...bottomOuter, ...bottomHole];
   for (const triangle of ShapeUtils.triangulateShape(
     bottomOuter.map(p => new Vector2(p.x, p.y)), [bottomHole.map(p => new Vector2(p.x, p.y))])) {

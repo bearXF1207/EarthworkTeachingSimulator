@@ -68,6 +68,9 @@ fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .quantity-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid #384b3d; color: #f0e3bd; }
 .quantity-summary { margin-top: 22px; padding-top: 16px; border-top: 1px solid #314138; font-size: 14px; }
 .quantity-summary strong { color: #f0e3bd; }
+/* 错误边界的兜底提示：与面板同一视觉语言，避免白屏。 */
+.fatal-error { padding: 32px; border: 1px solid #6b4b3a; border-radius: 12px; background: #2a1f1a; }
+.fatal-error p { margin: 0 0 16px; color: #f1c785; }
 @media (max-width: 800px) {
   .app-shell { padding: 24px; }
   .app-header { flex-wrap: wrap; }

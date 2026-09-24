@@ -38,13 +38,17 @@ function insideBand(point: Point2, neighbour: TrimNeighbour): boolean {
   return !neighbour.island || !onIslandSide(point, neighbour.island);
 }
 
+type Exit = { distance: number; normal: Point2 };
+
 /**
  * 从槽带内一点沿 `direction` 前进，与槽带边界的第一个交点距离（外圈或岛边界都算）。
- * 没有交点（整段仍在槽带内）时返回 `maxDistance`。
+ * 同时给出被越过那条边的单位法向，并把法向统一取成与前进方向同侧，
+ * 便于按“边界法向”而不是“支槽方向”让出缝隙。
+ * 没有交点（整段仍在槽带内）时返回 `maxDistance` 与零法向。
  */
-function firstExit(from: Point2, direction: Point2, maxDistance: number, neighbour: TrimNeighbour): number {
+function firstExit(from: Point2, direction: Point2, maxDistance: number, neighbour: TrimNeighbour): Exit {
   const loops = neighbour.island ? [neighbour.ring, neighbour.island] : [neighbour.ring];
-  let best = maxDistance;
+  let best = maxDistance, normal: Point2 | null = null;
   for (const ring of loops) for (let i = 0; i < ring.length; i++) {
     const a = ring[i]!, b = ring[(i + 1) % ring.length]!;
     const ex = b.x - a.x, ey = b.y - a.y;
@@ -56,14 +60,24 @@ function firstExit(from: Point2, direction: Point2, maxDistance: number, neighbo
     const ratio = (direction.y * cx - direction.x * cy) / denominator;
     if (ratio < -1e-9 || ratio > 1 + 1e-9) continue;
     best = along;
+    const size = Math.hypot(ex, ey);
+    const candidate = { x: ey / size, y: -ex / size };
+    const sign = candidate.x * direction.x + candidate.y * direction.y >= 0 ? 1 : -1;
+    normal = { x: candidate.x * sign, y: candidate.y * sign };
   }
-  return best;
+  return { distance: best, normal: normal ?? { x: 0, y: 0 } };
 }
 
 /**
  * 端部需要收边的距离，按“端面两个角点沿中心线退出相邻槽顶边界”的最大值确定，
  * 保证收边后整条端面都不再落入对方槽内（只可能共边接触）。
  * 返回 null 表示这一段整体都在对方槽内，需要丢掉该端点。
+ *
+ * 端面垂直于支槽中心线（butt cap），与斜交的相邻边界不可能共面：
+ * 收边后端点位于边界外侧 `顶半宽×|u·ĥ|`、远端角点最多外移 `2×顶半宽×|u·ĥ|`
+ * （`u` 为支槽向外方向、`ĥ` 为被贴合边界的单位方向），这是“不重叠”前提下的几何下界。
+ * 垂直贴合（u⊥ĥ）时两个外偏量都为 0，与原先沿中心线让缝完全等价；
+ * 斜交时缝隙改按边界法向度量，端面与边界仍保持 10nm 级净距，而不是只在一个角点上相切。
  */
 function endCut(from: Point2, to: Point2, halfWidth: number, neighbour: TrimNeighbour): number | null {
   const dx = to.x - from.x, dy = to.y - from.y;
@@ -71,15 +85,19 @@ function endCut(from: Point2, to: Point2, halfWidth: number, neighbour: TrimNeig
   if (!(length > EPSILON)) return 0;
   const direction = { x: dx / length, y: dy / length };
   const normal = { x: -direction.y, y: direction.x };
-  let cut = 0;
+  let cut = 0, boundary = { x: 0, y: 0 };
   for (const sign of [1, -1]) {
     const corner = { x: from.x + normal.x * halfWidth * sign, y: from.y + normal.y * halfWidth * sign };
     // 只有严格落在槽带内的角点才需要收边：正好落在边界上的角点属于共边接触，岛内则允许开挖。
     if (!insideBand(corner, neighbour)) continue;
-    cut = Math.max(cut, firstExit(corner, direction, length, neighbour));
+    const exit = firstExit(corner, direction, length, neighbour);
+    if (exit.distance > cut) { cut = exit.distance; boundary = exit.normal; }
   }
   if (!(cut > 0)) return 0;
-  const cleared = cut + TRIM_CLEARANCE;
+  // 净距按边界法向度量，换算回沿中心线的前进距离要除以 |u·n̂|；上限 1µm，避免擦边时数值放大。
+  const alignment = Math.abs(boundary.x * direction.x + boundary.y * direction.y);
+  const clearance = Math.min(TRIM_CLEARANCE / Math.max(alignment, 0.05), 1e-6);
+  const cleared = cut + clearance;
   return cleared >= length - 1e-9 ? null : cleared;
 }
 

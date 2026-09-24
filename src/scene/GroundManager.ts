@@ -34,7 +34,7 @@ export class GroundManager {
     geometry.setAttribute('position', new Float32BufferAttribute(positions, 3)); geometry.computeVertexNormals();
     this.ground = new Mesh(geometry, new MeshStandardMaterial({ color: 0x7d8060, roughness: 1, side: DoubleSide }));
     const lines: number[] = [];
-    // Subtract convex-hole intervals from each integer grid line.
+    // 从每条整数网格线上减去凸孔洞区间。
     const clip = (fixed: number, vertical: boolean, low: number, high: number): void => {
       const intervals: [number, number][] = [];
       for (const ring of holes) {

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/app/App';
+import { ErrorBoundary } from '../src/app/ErrorBoundary';
 import { FakeRenderer, FakeResizeObserver } from './scene-test-kit';
 import { SceneManager } from '../src/scene/SceneManager';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
@@ -697,6 +698,53 @@ describe('M7 工程量与测量界面', () => {
     expect(screen.queryByText(/测量距离/)).not.toBeInTheDocument();
     expect(document.querySelector('.measure-label')).toBeNull();
     expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+  });
+
+  it('界面链路：从相邻槽中心线起画并回车，垂直接口把连接补挖量计入合计', () => {
+    render(<App />);
+    const summary = (): HTMLElement => screen.getByRole('region', { name: '工程量合计' });
+    drawTrench([[0, 0], [20, 0]]); // 主槽 B=2/H=2/m=.5 → V=120
+    expect(summary()).toHaveTextContent('预计土方量合计 120.00 m³');
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(10, 12); clickGround(10, 0); // 终点吸附主槽中心线，收边到槽顶边界
+    fireEvent.keyDown(window, { key: 'Enter' });
+    // 支槽 10m×6m²=60m³，加上正交接口的 8/3m³ 土楔
+    expect(summary()).toHaveTextContent('其中连接补充开挖 2.67 m³');
+    expect(summary()).toHaveTextContent('预计土方量合计 182.67 m³');
+    expect(screen.getByText(/2 个开挖对象/)).toBeVisible();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('界面链路：亚像素倾角（终点落在中心线非整数位置）同样贯通，且不改写中心线数据', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    const summary = (): HTMLElement => screen.getByRole('region', { name: '工程量合计' });
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    clickGround(10, 12); clickGround(10.3, 0); // 起点与终点不共线 → 端面与主槽边界斜交
+    fireEvent.keyDown(window, { key: 'Enter' });
+    const text = summary().textContent ?? '';
+    const correction = Number(/其中连接补充开挖 ([\d.]+) m³/.exec(text)?.[1]);
+    expect(correction).toBeGreaterThan(8 / 3); // 8/3 土楔 + 端面外偏留下的土墙
+    expect(correction).toBeLessThan(3.4);
+    const total = Number(/预计土方量合计 ([\d.]+) m³/.exec(text)?.[1]);
+    expect(total).toBeGreaterThan(182.6);
+    expect(total).toBeLessThan(183.1);
+    // 派生连接不写回数据：存储的中心线仍是收边结果，不是原始点击坐标
+    const stored = dispatch.mock.results.at(-1)?.value.value.elements[1];
+    expect(stored.points[1]).not.toEqual({ x: 10.3, y: 0 });
+    expect(stored.points[0]).toEqual({ x: 10, y: 12 });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('错误边界：场景渲染抛错时给出提示与重试入口，而不是白屏', () => {
+    const noise = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const Boom = (): never => { throw new Error('渲染失败'); };
+    render(<ErrorBoundary><Boom /></ErrorBoundary>);
+    expect(screen.getByRole('alert')).toHaveTextContent('界面渲染出错');
+    fireEvent.click(screen.getByRole('button', { name: '重试渲染' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('界面渲染出错');
+    noise.mockRestore();
   });
 
   it('测量不拦截选择：切回选择工具后仍能点选开挖对象', () => {

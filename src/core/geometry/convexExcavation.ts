@@ -6,9 +6,8 @@ type Plane = { normal: Vec3; constant: number };
 export type Cell = { id: string; faces: Face[]; planes: Plane[]; min: Vec3; max: Vec3 };
 export type UnionTriangle = { id: string; material: 0 | 1; a: Vec3; b: Vec3; c: Vec3 };
 
-// Coordinates remain doubles until the rendering boundary. Distances use unit normals.
-// Match geometric validation tolerance, including 1e-8 m trim clearance plus
-// floating-point roundoff after rotation/translation of a site.
+// 坐标保持双精度直到渲染边界；距离一律用单位法向度量。
+// 容差与几何校验保持一致：含 1e-8 m 的收边缝隙，以及场地旋转/平移后的浮点舍入。
 const DISTANCE_EPSILON = 1e-7;
 const AREA_EPSILON = 1e-12;
 const MAX_FRAGMENTS = 100_000;
@@ -41,7 +40,7 @@ function cleanPolygon(vertices: Vec3[]): Vec3[] {
   return clean;
 }
 
-/** The interior of each plane is n·p+c <= 0; display faces point into the cavity. */
+/** 每个平面的内部为 n·p+c <= 0；显示面朝向开挖空腔。 */
 export function makeCell(id: string, bottom: Point2[], top: Point2[], depth: number): Cell {
   if (!id || !Number.isFinite(depth) || depth <= DISTANCE_EPSILON || bottom.length < 3 || bottom.length !== top.length) {
     throw new Error('开挖凸体的编号、深度或顶底轮廓无效');
@@ -51,7 +50,7 @@ export function makeCell(id: string, bottom: Point2[], top: Point2[], depth: num
     return { x: point.x, y: point.y, z };
   });
   const low = ring(bottom, -depth), high = ring(top, 0);
-  // Checking every point against every edge rejects reversed, concave and self-crossing rings.
+  // 逐点对每条边检查凸性：可同时拒绝反向、凹与自交的轮廓。
   for (const vertices of [low, high]) {
     if (polygonNormal(vertices).z <= 2 * AREA_EPSILON) throw new Error('开挖凸体轮廓必须逆时针且具有正面积');
     for (let i = 0; i < vertices.length; i++) {
@@ -87,7 +86,7 @@ export function makeCell(id: string, bottom: Point2[], top: Point2[], depth: num
   return { id, faces, planes, min, max };
 }
 
-/** Split only genuinely crossing polygons; a coplanar polygon belongs to the interior. */
+/** 只切分真正穿越的多边形；与平面共面的多边形按内部处理。 */
 function splitPolygon(vertices: Vec3[], plane: Plane): { inside: Vec3[]; outside: Vec3[] } {
   const distances = vertices.map(point => {
     const value = distance(plane, point);
@@ -110,7 +109,7 @@ function splitPolygon(vertices: Vec3[], plane: Plane): { inside: Vec3[]; outside
   return { inside: cleanPolygon(inside), outside: cleanPolygon(outside) };
 }
 
-/** Partition P \ cell into convex polygons, without overlapping exterior fragments. */
+/** 把 P \ cell 划分成凸多边形，外部碎片之间互不重叠。 */
 function subtractCell(vertices: Vec3[], cell: Cell): Vec3[][] {
   const exterior: Vec3[][] = [];
   let interior = vertices;
@@ -127,9 +126,9 @@ const boxesOverlap = (a: Cell, b: Cell): boolean => (['x', 'y', 'z'] as const).e
   a.min[axis] <= b.max[axis] + DISTANCE_EPSILON && b.min[axis] <= a.max[axis] + DISTANCE_EPSILON);
 
 /**
- * Boundary of the true union of convex excavation cells, excluding the z=0 lid.
- * Shared opposite-facing walls disappear from both cells. Coincident exterior
- * faces belong to the first cell, avoiding both doubled surfaces and missing bottoms.
+ * 凸开挖单元真实并集的边界（不含 z=0 的顶盖）。
+ * 两侧朝向相反的内墙从两个单元中同时消失；同向重合的外表面归属更早的单元，
+ * 既不会出现双层面，也不会漏掉底面。
  */
 export function unionSurfaces(cells: Cell[]): UnionTriangle[] {
   const triangles: UnionTriangle[] = [];
@@ -140,8 +139,7 @@ export function unionSurfaces(cells: Cell[]): UnionTriangle[] {
       const inward = polygonNormal(face.vertices), size = length(inward);
       let fragments = [face.vertices];
       for (const { cell, index } of candidates) {
-        // Equal exterior planes have the same inward normal. The earlier source
-        // keeps its face; later sources subtract exactly the overlapping portion.
+        // 同向共面的外表面法向相同：更早的源保留自己的面，更晚的源减去完全重叠的部分。
         if (sourceIndex < index && cell.planes.some(plane =>
           dot(inward, plane.normal) / size < -1 + 1e-10 &&
           face.vertices.every(point => Math.abs(distance(plane, point)) <= DISTANCE_EPSILON))) continue;
@@ -160,11 +158,11 @@ export function unionSurfaces(cells: Cell[]): UnionTriangle[] {
   return triangles;
 }
 
-/** Signed divergence integral; inward-facing excavation boundaries give positive m³. */
+/** 有向散度积分；朝向开挖空腔的边界给出正体积（m³）。 */
 export function signedUnionVolume(triangles: UnionTriangle[]): number {
   if (!triangles.length) return 0;
-  // Move the integration origin in XY for stability at large site coordinates.
-  // Keep z=0: the omitted horizontal lid then contributes exactly zero.
+  // 积分原点在 XY 上平移到首个三角形，避免大场地坐标下的消减误差；
+  // z 保持 0：被省略的水平顶盖贡献恰好为零。
   const origin = { x: triangles[0]!.a.x, y: triangles[0]!.a.y, z: 0 };
   let sum = 0, compensation = 0;
   for (const triangle of triangles) {

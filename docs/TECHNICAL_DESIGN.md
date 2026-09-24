@@ -1,6 +1,6 @@
 # 土方开挖教学模拟器：技术校核与实施设计
 
-状态：2026-09-21，设计基线 v1；代码已实现至 **M7**（见 `README.md` 与各阶段报告）。M8–M10 是后续执行合同，不代表已经实现。M5/M6 追加的环形基槽、自动收边贯通、端面省略与拖动编辑以 `docs/M5_REPORT.md`、`docs/M6_REPORT.md` 的记录为准；M7 的土方量与测量见 `docs/M7_REPORT.md`。
+状态：2026-09-21，设计基线 v1；代码已实现至 **M7**（见 `README.md` 与各阶段报告）。M8–M10 是后续执行合同，不代表已经实现。M5/M6 追加的环形基槽、自动收边与拖动编辑以 `docs/M5_REPORT.md`、`docs/M6_REPORT.md` 的记录为准；M7 的土方量与测量见 `docs/M7_REPORT.md`；2026-09-24 的接口真实贯通与计量修正见 §7.6 与 `docs/JUNCTION_FIX_REPORT.md`（`M5_REPORT.md` 中"端面省略"的旧结论已勘误失效）。
 
 ## 1. 如何使用这套文档
 
@@ -63,7 +63,7 @@ FileGateway → parse unknown → validate Project → replace through command/s
 | `src/components/TopBar/` 等 | 控件与输入草稿、显示结果 | 直接增删 Scene |
 | `src/core/model/` | Project / element / settings / Point2 类型、默认值 | DOM、React、Three 引用 |
 | `src/core/validation/` | 数值、折线、多边形、项目文件校验 | 静默修正用户非法几何 |
-| `src/core/geometry/` | offset、join、坑槽几何生成 | 保存 Mesh、读取 UI 状态 |
+| `src/core/geometry/` | offset、join、坑槽几何生成、收边（`trenchTrim`）与接口派生并集（`trenchNetwork`/`convexExcavation`，纯数值、不依赖 Three） | 保存 Mesh、读取 UI 状态 |
 | `src/core/calculation/` | 长度、面积、体积、距离纯函数 | 从 Mesh 包围盒倒推工程量 |
 | `src/core/commands/` | 原子编辑动作、历史快照（M8） | 操作 GPU |
 | `src/core/io/` | schema、序列化、FileGateway 合同 | React UI、任意系统路径读取 |
@@ -173,6 +173,17 @@ UI 文本框、拖动位置和绘制中的折线都是临时 draft。未通过�
 
 MVP 不在异常时自动切 bevel：bevel 会改变顶点对应和局部面连接，须另设计并测试后才能加入。合法的90°、45°、钝角应成功；折返、offset 自交的窄 U 形应明确拒绝。直线共线中间节点可保留，去除产生的共线退化三角形；禁止静默删除用户有效控制节点。
 
+### 7.6 基槽接口连接（派生并集，2026-09-24）
+
+两条基槽"顶口相接"不等于槽底连通：端面省略只会露出主槽坡墙，深度越深留下的土楔越宽（`m·H`）。因此接口按**派生几何**处理，不写回存储的中心线：
+
+1. `trenchTrim` 先把新槽端部收边到相邻槽顶开口之外，并沿被越过边界的法向让出 10nm 级净距。端面垂直支槽中心线（butt cap），与斜交边界不可能共面：收边后端点位于边界外侧 `顶半宽×|u·ĥ|`、远端角点最多两倍（`u` 为支槽向外方向、`ĥ` 为边界方向）。
+2. `trenchNetwork` 按"贴合带"识别接口：端面两角点落在**同一条**邻槽顶边界、沿边位置在跨度内、支槽朝槽内、近端角点贴住边界（≤ 净距带），远端角点不超过 `min(2×顶半宽×|u·ĥ|, 0.25m)`。判定同时接受精确贴合与收边留下的外偏，真实绘制的微小倾角因此可以贯通；"停在边界外 2cm 的垂直端面"或"斜交且远离边界"不会被误判。
+3. 识别到接口后构造**连接凸单元**：从支槽端面沿中心线延伸到主槽中心线；`convexExcavation` 用半空间裁剪去掉内部面（两侧相反的公共墙同时删除、同向重合外表面只留一份），得到并集面片供渲染，并积分出并集体积。
+4. `core/calculation/quantities` 的 `connectionCorrection = 并集体积 − 各凸单元体积之和`，即接口处真正新增的开挖量；`项目合计 = 单槽估算之和 + 连接补挖量`，不重复计入已有槽体。显示与计量共用同一份缓存（按内容为键，编辑或重排不复用陈旧结果）。
+5. 派生几何有面片数量上限；`volumeSummary` 在并集触发守卫时退回单槽估算并标记降级，渲染期不因计量失败中断（`ErrorBoundary` 兜底）。
+6. 深浅槽只在共同深度内贯通，更深处保留台阶；仅角点接触、平行槽口并排贴边不算接口，也不扩大既有地面开口。需要一般斜交或任意交叉开挖时，须另行扩展开口合并合同。
+
 ## 8. 地面开口与对象相交
 
 M1 是完整水平平面。M2 引入 `GroundManager`：取足够大的矩形外边界（默认100m方形，超范围按所有开口 AABB 向外至少10m扩展），使用开口集合构建 holes，然后调用 `ShapeUtils.triangulateShape(contour, holes)` 构建 z=0 地面 BufferGeometry。外环和孔采用相反绕序，遵守所选三角化 API 的输入约定。
@@ -213,6 +224,8 @@ A中 = (L+mH)(W+mH)
 
 `V=πH(R²+Rr+r²)/3`。底直径4、H=2、m=.5：r=2、R=3，V=38π/3≈39.7935069455m³。
 
+工程合计在单槽估算之上叠加接口处的**连接补挖量**：`合计 = Σ单槽估算 + (并集体积 − 各凸单元体积之和)`。补挖量来自与显示同源的并集几何（§7.6），因此不重复计入已有槽体；界面单独列出该增量，并在并集几何不可用时退回单槽估算。
+
 平面距离 `hypot(x2-x1,y2-y1)`；(0,0)到(3,4)为5m。用 `hypot` 求长度。计算结果必须有限，计算层使用完整精度，测试以绝对/相对误差比较，显示层才格式化。体积不是专业施工计价、安全放坡建议或松方/压实方换算；此项目只计算规定几何的原状开挖量。
 
 ## 10. 场景与交互生命周期
@@ -227,7 +240,7 @@ Three 默认 GridHelper 在 XZ 平面，需旋转到 XY。地面 PlaneGeometry �
 
 ### 10.2 输入状态机
 
-用判别联合定义 `select | drawTrench | placePit | measure | dragNode | dragPit`，每种保存自己的临时数据。一个时刻只有一个主要工具。Esc 清理当前 draft、恢复 controls；切工具和开项目同样清理。绘制时禁用冲突的 Orbit 左键动作。
+判别联合定义工具与各自的临时数据：`select | measure | drawTrench | placePit`（`DrawingManager`）。一个时刻只有一个主要工具。Esc 清理当前 draft、恢复 controls；切工具和开项目同样清理。绘制时禁用冲突的 Orbit 左键动作。**实现说明**：拖动编辑没有做成状态机分支，而是 `SceneViewport` 内的拖动草稿（`drag` ref：对象、节点序号、起始屏幕坐标、阈值标记），因为它只在 `select` 下生效且需要跨 pointermove 保留；状态机因此保持四个分支。
 
 双击会伴随 click，不能把第二次点击重复加入节点；忽略 `event.detail>1` 的添加动作，并在提交前检测重复点。Enter 仅在非文本输入焦点且至少2点时提交；Esc 取消不进入历史。输入长度角度时 Enter 提交输入段，不同时完成整条槽。Ctrl+Z/Y、Delete 不拦截 input/textarea/contenteditable 内正常编辑。
 

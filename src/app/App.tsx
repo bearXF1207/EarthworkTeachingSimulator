@@ -1,5 +1,6 @@
 import type { ReactElement } from 'react';
 import { SceneViewport } from '../components/SceneViewport';
+import { ErrorBoundary } from './ErrorBoundary';
 
 export function App(): ReactElement {
   return (
@@ -14,8 +15,9 @@ export function App(): ReactElement {
       </header>
 
       <main>
-        <SceneViewport />
-
+        <ErrorBoundary>
+          <SceneViewport />
+        </ErrorBoundary>
       </main>
 
       <footer>

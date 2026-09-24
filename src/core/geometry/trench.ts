@@ -15,7 +15,7 @@ export type BuiltTrench = {
   bottomHole?: Point2[];
 };
 
-/** Standalone excavation is closed at its ends; connected surfaces come from trenchNetwork. */
+/** 独立开挖的端部保持封闭；贯通面由 trenchNetwork 的派生连接提供。 */
 export function buildTrench(trench: Trench): BuiltTrench {
   const outlines = trenchOutlines(trench);
   const { bottomOutline, topOutline, bottomHole, topHole } = outlines;

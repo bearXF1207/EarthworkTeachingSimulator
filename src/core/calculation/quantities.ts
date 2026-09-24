@@ -14,7 +14,7 @@ export type Quantity = { volume: number | null; rows: QuantityRow[] };
 
 const finite = (value: number | null): value is number => value !== null && Number.isFinite(value);
 
-/** 单个开挖对象的工程量读数；无法计算的读数不出现在 rows 里，volume 为 null 时界面显示“—”。 */
+/** 单个开挖对象的工程量读数；无法计算的读数不出现在 rows 里，volume 为 null 时界面显示"—"。 */
 export function quantityOf(element: ExcavationElement): Quantity {
   if (element.type === 'trench') {
     const length = polylineLength(element.points);
@@ -58,4 +58,24 @@ export function totalVolume(elements: ExcavationElement[]): number {
 export function connectionCorrection(elements: ExcavationElement[]): number {
   const computable = elements.filter(e => e.type === 'trench' && trenchVolume(e) !== null);
   return buildTrenchNetwork(computable).correction;
+}
+
+export type VolumeSummary = { total: number; correction: number; degraded: boolean };
+
+/**
+ * 界面用的合计读数。连接并集在极端数据下可能触发几何守卫抛错，
+ * 这里捕获后退回"单槽估算之和"，并置 `degraded` 让界面明示连接修正不可用——
+ * 渲染期不允许因为一次计量失败而中断整个界面。
+ */
+export function volumeSummary(elements: ExcavationElement[]): VolumeSummary {
+  const sum = elements.reduce((total, element) => {
+    const volume = quantityOf(element).volume;
+    return finite(volume) ? total + volume : total;
+  }, 0);
+  try {
+    const correction = connectionCorrection(elements);
+    return { total: sum + correction, correction, degraded: false };
+  } catch {
+    return { total: sum, correction: 0, degraded: true };
+  }
 }

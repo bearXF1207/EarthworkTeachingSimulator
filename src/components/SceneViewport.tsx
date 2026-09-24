@@ -22,7 +22,7 @@ import { PitEditor } from './PropertyPanel/PitEditor';
 import { TrenchEditor } from './PropertyPanel/TrenchEditor';
 import { QuantityView } from './PropertyPanel/QuantityView';
 import { distance } from '../core/calculation/measurement';
-import { connectionCorrection, totalVolume } from '../core/calculation/quantities';
+import { volumeSummary } from '../core/calculation/quantities';
 
 const TRENCH_LABEL = '直线基槽';
 const POLYLINE_LABEL = '折线基槽';
@@ -365,6 +365,8 @@ export function SceneViewport(): ReactElement {
   }
 
   const active = project.elements.find(e => e.id === selected);
+  // 渲染期只读取带保护的合计：连接并集触发几何守卫时退回单槽估算，不中断界面。
+  const summary = volumeSummary(project.elements);
   return <><section className="scene-panel" aria-label="基础三维场景">
     <div className="scene-heading"><h2>施工场地</h2><span>{VIEW_LABELS[view]} · {project.elements.length} 个开挖对象 · 场地自动扩展</span></div>
     <div className="viewport" ref={host} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onClick={onClick} onDoubleClick={onDoubleClick}
@@ -394,8 +396,9 @@ export function SceneViewport(): ReactElement {
     {active && <QuantityView key={`q-${active.id}`} element={active} title={elementLabel(active)} />}
     <section className="quantity-summary" aria-label="工程量合计">
       <h3>工程量合计</h3>
-      <p><strong>预计土方量合计 {totalVolume(project.elements).toFixed(2)} m³</strong></p>
-      <p>其中连接补充开挖 {connectionCorrection(project.elements).toFixed(2)} m³</p>
+      <p><strong>预计土方量合计 {summary.total.toFixed(2)} m³</strong></p>
+      <p>其中连接补充开挖 {summary.correction.toFixed(2)} m³</p>
+      {summary.degraded && <p role="alert" className="input-error">连接并集几何不可用，合计暂时只含单槽估算。</p>}
       <p className="scope-note">单槽估算之和加连接修正。连接增量按显示同源的合并几何计算，不重复计入已有开挖；草稿与临时测量不计入。不同深度接口保留高差台阶。</p>
     </section>
     {error && <p role="alert" className="input-error">{error}</p>}

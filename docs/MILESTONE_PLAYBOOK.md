@@ -331,7 +331,7 @@ M5 已通过。实现 Raycasting 选择、高亮、属性编辑、删除整对�
 
 ## 9. M7：土方量、结果显示与两点距离测量
 
-> 状态：**已通过（2026-09-23）**，结果见 [M7_REPORT.md](./M7_REPORT.md)。实现要点：`core/calculation/` 的 `measurement/trenchVolume/pitVolume/quantities` 纯函数、`QuantityView` 只读读数与合计、测量走 `DrawingManager` 草稿分支。
+> 状态：**已通过（2026-09-23）**，结果见 [M7_REPORT.md](./M7_REPORT.md)。实现要点：`core/calculation/` 的 `measurement/trenchVolume/pitVolume/quantities` 纯函数、`QuantityView` 只读读数与合计、测量走 `DrawingManager` 草稿分支。2026-09-24 的接口真实贯通与计量修正（贴合带容差、连接补挖量、`volumeSummary` 降级与 `ErrorBoundary`）见 [JUNCTION_FIX_REPORT.md](./JUNCTION_FIX_REPORT.md) 与设计 §7.6。
 
 ### 前置条件与范围
 

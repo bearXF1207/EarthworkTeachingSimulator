@@ -10,7 +10,7 @@ import type { Prepared } from '../store/ProjectStore';
 
 export type DisplayMode = 'solid' | 'wireframe';
 export type SceneStatus = { ready: boolean; message: string };
-// Lifecycle tests substitute only the GPU boundary, retaining real managers and controls.
+// 生命周期测试只替换 GPU 边界，其余管理器与控制器仍用真实实现。
 export type RendererPort = Pick<WebGLRenderer, 'domElement' | 'setSize' | 'setPixelRatio' | 'setAnimationLoop' | 'render' | 'dispose' | 'forceContextLoss'>;
 
 export class SceneManager {
