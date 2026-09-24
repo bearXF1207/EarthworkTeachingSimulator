@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/app/App';
@@ -10,6 +10,9 @@ import type * as Three from 'three';
 import { BufferGeometry, Material, ShapeUtils } from 'three';
 import { GroundManager } from '../src/scene/GroundManager';
 import { ProjectStore } from '../src/store/ProjectStore';
+import { serializeProject } from '../src/core/io/projectSchema';
+import { emptyProject } from '../src/core/model/project';
+import type { Pit, Project } from '../src/core/model/project';
 
 vi.mock('three', async (importOriginal) => {
   const actual = await importOriginal<typeof Three>();
@@ -17,10 +20,23 @@ vi.mock('three', async (importOriginal) => {
   return { ...actual, WebGLRenderer: Renderer };
 });
 
+/** M8：文件服务用可控替身，界面只依赖 FileGateway 合同。 */
+const gateway = vi.hoisted(() => ({
+  open: vi.fn(), save: vi.fn(), kind: 'file-system' as 'file-system' | 'download', canReopen: true,
+}));
+vi.mock('../src/core/io/fileGateway', () => ({ createBrowserFileGateway: () => gateway }));
+const savedOutcome = (name: string, target: null | { name: string } = null) =>
+  ({ ok: true, value: { status: 'saved', file: { name }, target } });
+const exportOutcome = (name: string) => ({ ok: true, value: { status: 'export-requested', file: { name } } });
+const cancelledOutcome = { ok: true, value: { status: 'cancelled' } };
+
 beforeEach(() => {
   FakeRenderer.instances = []; FakeRenderer.active.clear(); FakeResizeObserver.instances = [];
   vi.stubGlobal('ResizeObserver', FakeResizeObserver);
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 500));
+  gateway.kind = 'file-system';
+  gateway.open.mockReset(); gateway.save.mockReset();
+  gateway.save.mockResolvedValue(savedOutcome('未命名工程.excavation'));
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -103,7 +119,8 @@ describe('M1 界面与场景生命周期（仅替换GPU边界）', () => {
     const prepare = (project: ReturnType<ProjectStore['getSnapshot']>) => scene.prepareProject(project);
     store.dispatch({ type: 'add', element }, prepare);
     const initialGeometry = geometryDispose.mock.calls.length, initialMaterial = materialDispose.mock.calls.length;
-    for (let i = 0; i < 100; i++) expect(store.dispatch({ type: 'update', element: { ...element, rotation: i } }, prepare).ok).toBe(true);
+    // rotation 从 1 开始：与初始 0 相同的更新属于“无变化命令”，按设计不重建几何也不入历史。
+    for (let i = 0; i < 100; i++) expect(store.dispatch({ type: 'update', element: { ...element, rotation: i + 1 } }, prepare).ok).toBe(true);
     // Per replacement: ground, grid, axes, pit (4 geometries; 5 materials).
     expect(geometryDispose.mock.calls.length - initialGeometry).toBe(400);
     expect(materialDispose.mock.calls.length - initialMaterial).toBe(500);
@@ -735,6 +752,124 @@ describe('M7 工程量与测量界面', () => {
     expect(stored.points[1]).not.toEqual({ x: 10.3, y: 0 });
     expect(stored.points[0]).toEqual({ x: 10, y: 12 });
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('保存与脏状态：真实写入才变干净，取消与仅请求导出都保持未保存', async () => {
+    render(<App />);
+    expect(screen.getByText('已保存')).toBeVisible();
+    drawTrench([[0, 0], [20, 0]]);
+    expect(screen.getByText('未保存')).toBeVisible();
+    // 真实写入成功
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await screen.findByText('已保存');
+    expect(gateway.save).toHaveBeenCalledTimes(1);
+    // 再次编辑 → 未保存；用户取消保存 → 仍未保存
+    fireEvent.change(screen.getByRole('textbox', { name: '开挖深度（m）' }), { target: { value: '4' } });
+    expect(screen.getByText('未保存')).toBeVisible();
+    gateway.save.mockResolvedValueOnce(cancelledOutcome);
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(gateway.save).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('未保存')).toBeVisible();
+    // Blob 回退：只请求下载 → 保持未保存，确认已导出后才干净
+    gateway.save.mockResolvedValueOnce(exportOutcome('副本.excavation'));
+    fireEvent.click(screen.getByRole('button', { name: '另存为…' }));
+    await screen.findByRole('button', { name: '确认已导出' });
+    expect(screen.getByText('未保存')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '确认已导出' }));
+    expect(screen.getByText('已保存')).toBeVisible();
+  });
+
+  it('未保存时新建：取消保留工程，不保存才清空；保存失败不执行原动作', async () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '新建' }));
+    const dialog = screen.getByRole('dialog', { name: '未保存的修改' });
+    expect(dialog).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+
+    // 保存失败：留在对话框并保留工程
+    gateway.save.mockResolvedValueOnce({ ok: false, issues: [{ code: 'io', path: '', message: '磁盘只读' }] });
+    fireEvent.click(screen.getByRole('button', { name: '新建' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存并继续' }));
+    await screen.findByText(/未执行原动作/);
+    expect(screen.getByRole('dialog')).toBeVisible();
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+
+    // 不保存并继续：清空为新的空工程
+    fireEvent.click(screen.getByRole('button', { name: '不保存并继续' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+    expect(screen.getByText('已保存')).toBeVisible();
+    expect(dispatch).toHaveBeenCalled();
+  });
+
+  it('打开文件：合法内容替换工程并清空选择/历史，非法内容保留当前工程', async () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    // 未保存 → 需要确认；选择“不保存并继续”
+    const opened: Project = { ...emptyProject(), name: '打开的工程', elements: [
+      { id: 'p1', type: 'square-pit', position: { x: 0, y: 0 }, bottomSize: 4, depth: 2, slope: .5, rotation: 0 } as Pit,
+    ] };
+    gateway.open.mockResolvedValueOnce({ ok: true, value: { name: '样例.excavation', target: null, text: serializeProject(opened) } });
+    fireEvent.click(screen.getByRole('button', { name: '打开…' }));
+    fireEvent.click(screen.getByRole('button', { name: '不保存并继续' }));
+    await screen.findByText('打开的工程');
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    expect(screen.getByText('已保存')).toBeVisible();
+
+    // 非法内容：报错并保留当前工程
+    gateway.open.mockResolvedValueOnce({ ok: true, value: { name: 'bad.excavation', target: null, text: '{"version":999}' } });
+    fireEvent.click(screen.getByRole('button', { name: '打开…' }));
+    await screen.findByText(/打开失败/);
+    expect(screen.getByText('打开的工程')).toBeVisible();
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+  });
+
+  it('Ctrl+Z / Ctrl+Y 在画布生效，在文本输入框内保留文本编辑行为', () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+    fireEvent.keyDown(window, { key: 'y', ctrlKey: true });
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true, shiftKey: true });
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    // 撤销/重做会清空选择：重新选中对象后，输入框内 Ctrl+Z 不触发文档撤销
+    const select = screen.getByRole('combobox', { name: '当前对象' });
+    const id = [...select.querySelectorAll('option')].map(option => option.value).find(value => value !== '')!;
+    fireEvent.change(select, { target: { value: id } });
+    const depth = screen.getByRole('textbox', { name: '开挖深度（m）' });
+    fireEvent.keyDown(depth, { key: 'z', ctrlKey: true });
+    fireEvent.keyDown(depth, { key: 'z', ctrlKey: true });
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+  });
+
+  it('保存等待期间禁止并发编辑，未保存时 beforeunload 触发原生提醒', async () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    let release: (value: unknown) => void = () => undefined;
+    gateway.save.mockReturnValueOnce(new Promise(resolve => { release = resolve; }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await waitFor(() => expect(gateway.save).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: '放置基坑' }));
+    clickGround(60, 0);
+    expect(screen.getByRole('alert')).toHaveTextContent('正在保存或打开文件');
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    release(savedOutcome('未命名工程.excavation'));
+    await screen.findByText('已保存');
+    // 已保存 → 不拦截离开
+    const clean = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(clean);
+    expect(clean.defaultPrevented).toBe(false);
+    // 再次编辑 → 触发原生提醒
+    fireEvent.change(screen.getByRole('textbox', { name: '开挖深度（m）' }), { target: { value: '4' } });
+    const dirty = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(dirty);
+    expect(dirty.defaultPrevented).toBe(true);
   });
 
   it('错误边界：场景渲染抛错时给出提示与重试入口，而不是白屏', () => {

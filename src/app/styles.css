@@ -68,6 +68,20 @@ fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
 .quantity-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid #384b3d; color: #f0e3bd; }
 .quantity-summary { margin-top: 22px; padding-top: 16px; border-top: 1px solid #314138; font-size: 14px; }
 .quantity-summary strong { color: #f0e3bd; }
+/* M8 文档栏：保存状态、文件操作与编辑历史。 */
+.document-bar { margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid #314138; }
+.document-name { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; font-size: 15px; }
+.dirty-badge, .clean-badge { padding: 3px 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
+.dirty-badge { background: #4a3524; color: #f1c785; }
+.clean-badge { background: #26392d; color: #bfcec0; }
+.export-confirm { margin-top: 12px; padding: 10px 12px; border: 1px solid #d4b979; border-radius: 8px; background: #2a2418; font-size: 13px; }
+.export-confirm p { margin: 0 0 8px; color: #f0e3bd; }
+/* M8 未保存确认对话框：页面内三选项，不依赖浏览器原生对话框。 */
+.modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(10, 16, 13, .72); }
+.modal { width: min(460px, 92vw); padding: 24px; border: 1px solid #596b59; border-radius: 14px; background: #1b2922; }
+.modal h3 { margin: 0 0 12px; font-size: 18px; }
+.modal p { margin: 0 0 10px; color: #bacbbd; font-size: 14px; }
+.modal-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 18px; }
 /* 错误边界的兜底提示：与面板同一视觉语言，避免白屏。 */
 .fatal-error { padding: 32px; border: 1px solid #6b4b3a; border-radius: 12px; background: #2a1f1a; }
 .fatal-error p { margin: 0 0 16px; color: #f1c785; }

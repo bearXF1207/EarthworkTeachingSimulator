@@ -373,6 +373,8 @@ M6 已通过。公式全部实现于 `core/calculation/`；UI 只选择数据并
 
 ## 10. M8：项目文件、未保存状态与 50 步撤销重做
 
+> 状态：**已通过（2026-09-24）**，结果见 [M8_REPORT.md](./M8_REPORT.md)。实现要点：`core/io/projectSchema`（`.excavation` v1 严格解析）、`core/io/fileGateway`（句柄优先 + 下载回退）、`core/commands/commandManager`（50 步栈、peek/commit 分离）、`ProjectStore` 的 revision+文本基线与原子 `load/reset`、`DocumentBar`/`UnsavedDialog`。
+
 ### 前置条件与范围
 
 M7 已通过，所有编辑已经走统一命令入口。本阶段补齐历史、文件格式校验、新建/打开/保存/另存为、dirty 和浏览器阶段文件适配；不提前引入 Electron。

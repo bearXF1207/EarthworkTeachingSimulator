@@ -1,6 +1,6 @@
 # 土方开挖教学模拟器：技术校核与实施设计
 
-状态：2026-09-21，设计基线 v1；代码已实现至 **M7**（见 `README.md` 与各阶段报告）。M8–M10 是后续执行合同，不代表已经实现。M5/M6 追加的环形基槽、自动收边与拖动编辑以 `docs/M5_REPORT.md`、`docs/M6_REPORT.md` 的记录为准；M7 的土方量与测量见 `docs/M7_REPORT.md`；2026-09-24 的接口真实贯通与计量修正见 §7.6 与 `docs/JUNCTION_FIX_REPORT.md`（`M5_REPORT.md` 中"端面省略"的旧结论已勘误失效）。
+状态：2026-09-21，设计基线 v1；代码已实现至 **M8**（见 `README.md` 与各阶段报告）。M9–M10 是后续执行合同，不代表已经实现。M5/M6 追加的环形基槽、自动收边与拖动编辑以 `docs/M5_REPORT.md`、`docs/M6_REPORT.md` 的记录为准；M7 的土方量与测量见 `docs/M7_REPORT.md`；2026-09-24 的接口真实贯通与计量修正见 §7.6 与 `docs/JUNCTION_FIX_REPORT.md`（`M5_REPORT.md` 中"端面省略"的旧结论已勘误失效）；M8 的文件、历史与 dirty 见 §11 与 `docs/M8_REPORT.md`。
 
 ## 1. 如何使用这套文档
 

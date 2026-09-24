@@ -13,10 +13,16 @@ import { resolveSnap, ringCloseTarget, snapLabel, trenchSnapTargets } from '../c
 import { MIN_RING_NODES } from '../core/geometry/trenchOutline';
 import type { SnapResolution, SnapTarget } from '../core/geometry/snapTargets';
 import { ProjectStore } from '../store/ProjectStore';
-import type { Command } from '../store/ProjectStore';
+import type { Command, Prepared } from '../store/ProjectStore';
+import { createBrowserFileGateway } from '../core/io/fileGateway';
+import type { FileGateway, SaveTarget } from '../core/io/fileGateway';
+import { PROJECT_FILE_EXTENSION, parseProject } from '../core/io/projectSchema';
 import { PIT_LABELS, defaultPitDraft, pitFromDraft, trenchFromDraft } from '../core/model/project';
 import type { ExcavationElement, PitDraftParams, Point2, Project, Result, TrenchSection } from '../core/model/project';
 import { ViewControls } from './ViewControls/ViewControls';
+import { DocumentBar } from './TopBar/DocumentBar';
+import { UnsavedDialog } from './dialogs/UnsavedDialog';
+import type { UnsavedChoice } from './dialogs/UnsavedDialog';
 import { DrawingPanel } from './DrawingPanel/DrawingPanel';
 import { PitEditor } from './PropertyPanel/PitEditor';
 import { TrenchEditor } from './PropertyPanel/TrenchEditor';
@@ -53,12 +59,21 @@ export function SceneViewport(): ReactElement {
   const [ortho, setOrtho] = useState(false);
   const [snapHint, setSnapHint] = useState('');
   const [measureLabel, setMeasureLabel] = useState<{ x: number; y: number; text: string } | null>(null);
+  // M8 文档会话：文件服务、当前写入目的地、保存状态与未保存确认。
+  const [gateway] = useState<FileGateway>(() => createBrowserFileGateway());
+  const [saveTarget, setSaveTarget] = useState<SaveTarget | null>(null);
+  const [doc, setDoc] = useState(() => ({ name: store.getSnapshot().name, dirty: store.isDirty(), canUndo: store.canUndo, canRedo: store.canRedo }));
+  const [busy, setBusy] = useState(false);
+  const [pendingAction, setPendingAction] = useState<{ kind: 'new' | 'open'; message: string } | null>(null);
+  const [pendingExport, setPendingExport] = useState<{ text: string; name: string } | null>(null);
+  const busyRef = useRef(false);
   const snapTargets = useRef<SnapTarget[]>([]);
   const [generation, setGeneration] = useState(0);
   const [status, setStatus] = useState<SceneStatus>({ ready: false, message: '正在初始化场景…' });
   const pointerDown = useRef<Point2 | null>(null);
   const viewBeforeTool = useRef<ViewMode>('free');
-  const shortcuts = useRef<{ finish: () => void; cancel: () => void }>({ finish: () => undefined, cancel: () => undefined });
+  const shortcuts = useRef<{ finish: () => void; cancel: () => void; undo: () => void; redo: () => void }>(
+    { finish: () => undefined, cancel: () => undefined, undo: () => undefined, redo: () => undefined });
 
   useEffect(() => {
     if (!host.current) return;
@@ -81,12 +96,24 @@ export function SceneViewport(): ReactElement {
     snapTargets.current = trenchSnapTargets(project.elements, { halfWidth });
   }, [project, section]);
 
+  /** 撤销、重做、打开与新建都走同一份场景准备入口，不复用已释放的 Mesh。 */
+  function prepareProject(next: Project): Prepared {
+    if (!manager.current) throw new Error('Scene unavailable');
+    return manager.current.prepareProject(next);
+  }
+  /** 文档状态（名称、保存状态、历史可用性）从 store 实时同步到界面。 */
+  function syncDoc(): void {
+    const snapshot = store.getSnapshot();
+    setProject(snapshot);
+    setDoc({ name: snapshot.name, dirty: store.isDirty(), canUndo: store.canUndo, canRedo: store.canRedo });
+  }
+  function markBusy(value: boolean): void { busyRef.current = value; setBusy(value); }
+
   function dispatch(command: Command, reportError = true): Result<Project> {
-    const result = store.dispatch(command, next => {
-      if (!manager.current) throw new Error('Scene unavailable');
-      return manager.current.prepareProject(next);
-    });
-    if (result.ok) { setProject(result.value); setError(''); }
+    // 保存/打开等待期间禁止并发文档修改，避免把后续编辑误标为已保存。
+    if (busyRef.current) return { ok: false, issues: [{ code: 'busy', path: '', message: '正在保存或打开文件，请稍候再编辑' }] };
+    const result = store.dispatch(command, prepareProject);
+    if (result.ok) { setProject(result.value); setError(''); syncDoc(); }
     else if (reportError) setError(result.issues.map(i => `${i.path}：${i.message}`).join('；'));
     return result;
   }
@@ -332,8 +359,137 @@ export function SceneViewport(): ReactElement {
   }
   function update(element: ExcavationElement): Result<Project> { return dispatch({ type: 'update', element }, false); }
 
+  /** 新会话（新建/打开）后清空草稿、选择、临时测量与视角，再按新工程的设置同步开关。 */
+  function resetSessionUi(): void {
+    drag.current = null;
+    setDraw(drawing.cancel()); setDrawMessage(''); setSnapHint(''); setMeasureLabel(null);
+    manager.current?.setPreviewPoints([]); manager.current?.setSelected(null);
+    setSelected(''); setError('');
+    const settings = store.getSnapshot().settings;
+    setGrid(settings.gridVisible); setSnap(settings.snapEnabled);
+    changeView('free'); setDisplayMode('solid'); manager.current?.setDisplayMode('solid');
+  }
+  /** 撤销/重做后同步场景与选择：被撤销掉的对象不能继续处于选中状态。 */
+  function afterHistory(): void {
+    const next = store.getSnapshot();
+    drag.current = null;
+    setDraw(drawing.cancel()); setDrawMessage(''); setSnapHint(''); setMeasureLabel(null);
+    manager.current?.setPreviewPoints([]);
+    setSelected(previous => previous && next.elements.some(element => element.id === previous) ? previous : '');
+    setError(''); syncDoc();
+  }
+  function undo(): void {
+    const result = store.undo(prepareProject);
+    if (!result.ok) { setError(failure(result)); return; }
+    afterHistory();
+  }
+  function redo(): void {
+    const result = store.redo(prepareProject);
+    if (!result.ok) { setError(failure(result)); return; }
+    afterHistory();
+  }
+
+  /**
+   * 保存：只有 status=saved（真实写入）或用户随后确认导出才更新保存基线。
+   * export-requested 只是请求浏览器下载副本，不能据此清 dirty。
+   */
+  async function saveDocument(saveAs: boolean): Promise<'saved' | 'export-requested' | 'cancelled' | 'failed'> {
+    const text = store.snapshotText();
+    const suggestedName = `${store.getSnapshot().name}${PROJECT_FILE_EXTENSION}`;
+    markBusy(true);
+    const result = await gateway.save({ text, suggestedName, target: saveAs ? null : saveTarget });
+    markBusy(false);
+    if (!result.ok) { setError(result.issues.map(issue => issue.message).join('；')); return 'failed'; }
+    const outcome = result.value;
+    if (outcome.status === 'cancelled') { setError(''); return 'cancelled'; }
+    if (outcome.status === 'saved') {
+      store.markSaved(text);
+      setSaveTarget(outcome.target);
+      setPendingExport(null); setError(''); syncDoc();
+      return 'saved';
+    }
+    setPendingExport({ text, name: outcome.file.name }); setError(''); syncDoc();
+    return 'export-requested';
+  }
+
+  /** 用户确认刚刚导出的副本已保存：只对同一份快照生效，之后才允许继续原动作。 */
+  function confirmExport(): void {
+    const pending = pendingExport;
+    if (!pending) return;
+    if (store.snapshotText() !== pending.text) {
+      setPendingExport(null);
+      setError('文档在导出后又发生了变化：请重新导出后再确认。');
+      syncDoc();
+      return;
+    }
+    store.markSaved(pending.text);
+    setPendingExport(null); setError(''); syncDoc();
+    const action = pendingAction;
+    if (action) void continueAction(action);
+  }
+
+  function startNew(): void {
+    const result = store.reset(prepareProject);
+    if (!result.ok) { setError(failure(result)); return; }
+    setSaveTarget(null); setPendingExport(null); setPendingAction(null);
+    resetSessionUi(); syncDoc();
+  }
+  async function openFromFile(): Promise<void> {
+    markBusy(true);
+    const opened = await gateway.open();
+    markBusy(false);
+    setPendingAction(null);
+    if (!opened.ok) { setError(opened.issues.map(issue => issue.message).join('；')); return; }
+    if (!opened.value) return; // 用户取消：保持当前工程
+    const parsed = parseProject(opened.value.text);
+    if (!parsed.ok) {
+      setError(`打开失败，已保留当前工程：${parsed.issues.map(issue => `${issue.path}：${issue.message}`).join('；')}`);
+      return;
+    }
+    const result = store.load(parsed.value, prepareProject);
+    if (!result.ok) { setError(failure(result)); return; }
+    setSaveTarget(opened.value.target); setPendingExport(null);
+    resetSessionUi(); syncDoc();
+  }
+  async function continueAction(action: { kind: 'new' | 'open' }): Promise<void> {
+    if (action.kind === 'new') startNew();
+    else await openFromFile();
+  }
+  function requestNew(): void {
+    if (busyRef.current) return;
+    if (store.isDirty()) { setPendingAction({ kind: 'new', message: '' }); return; }
+    startNew();
+  }
+  function requestOpen(): void {
+    if (busyRef.current) return;
+    if (store.isDirty()) { setPendingAction({ kind: 'open', message: '' }); return; }
+    void openFromFile();
+  }
+  async function chooseUnsaved(choice: UnsavedChoice): Promise<void> {
+    const action = pendingAction;
+    if (!action) return;
+    if (choice === 'cancel') { setPendingAction(null); return; }
+    if (choice === 'discard') { await continueAction(action); return; }
+    const outcome = await saveDocument(false);
+    if (outcome === 'saved') { await continueAction(action); return; }
+    setPendingAction({ ...action, message: outcome === 'export-requested'
+      ? '已请求下载副本，但还没有确认写入成功：请先点击“确认已导出”，再继续。'
+      : outcome === 'cancelled' ? '已取消保存，未执行原动作。' : '保存失败，未执行原动作。' });
+  }
+
+  // 未保存时离开页面：只用浏览器原生提醒（自定义三按钮对话框在页面内新建/打开时才可用）。
+  useEffect(() => {
+    const onBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (!store.isDirty()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [store]);
+
   // 每次渲染后刷新确认/取消入口，键盘监听始终调用最新实现（确认本身也读实时草稿）。
-  useEffect(() => { shortcuts.current = { finish: finishTrench, cancel: cancelDrawing }; });
+  useEffect(() => { shortcuts.current = { finish: finishTrench, cancel: cancelDrawing, undo, redo }; });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       // 输入法组合状态中的按键一律不触发场景命令。
@@ -344,8 +500,15 @@ export function SceneViewport(): ReactElement {
         shortcuts.current.finish();
         return;
       }
-      // 文本输入、下拉与可编辑区域内的按键不触发场景命令（输入框内 Enter 只提交本段）。
+      // 文本输入、下拉与可编辑区域内的按键不触发场景命令（输入框内 Enter 只提交本段，Ctrl+Z 保留文本撤销）。
       if (isTextEntryTarget(event.target)) return;
+      const modifier = event.ctrlKey || event.metaKey;
+      if (modifier && (event.key === 'z' || event.key === 'Z')) {
+        event.preventDefault();
+        if (event.shiftKey) shortcuts.current.redo(); else shortcuts.current.undo();
+        return;
+      }
+      if (modifier && (event.key === 'y' || event.key === 'Y')) { event.preventDefault(); shortcuts.current.redo(); return; }
       if (event.key === 'Enter') shortcuts.current.finish();
       else if (event.key === 'Escape') shortcuts.current.cancel();
     };
@@ -380,6 +543,10 @@ export function SceneViewport(): ReactElement {
     <div className="scene-help"><span>{view === 'free' ? '左键旋转 · 右键平移 · 滚轮缩放' : '左键或右键平移 · 滚轮缩放 · 正交视图锁定旋转'}<br />网格间距 1m · 坐标轴：X 红 / Y 绿 / Z 蓝</span>
       <button onClick={reload}>重新加载场景</button></div>
   </section><aside className="next-stage" aria-label="绘制与开挖对象属性">
+    <DocumentBar name={doc.name} dirty={doc.dirty} canUndo={doc.canUndo} canRedo={doc.canRedo} busy={busy}
+      gatewayKind={gateway.kind} pendingExportName={pendingExport?.name ?? null}
+      onNew={requestNew} onOpen={requestOpen} onSave={() => void saveDocument(false)} onSaveAs={() => void saveDocument(true)}
+      onConfirmExport={confirmExport} onUndo={undo} onRedo={redo} />
     <h2>绘制与参数</h2>
     <DrawingPanel state={draw} ready={status.ready} message={drawMessage} section={section} pit={pit}
       ortho={ortho} onOrtho={setOrtho} hint={snapHint}
@@ -402,6 +569,8 @@ export function SceneViewport(): ReactElement {
       <p className="scope-note">单槽估算之和加连接修正。连接增量按显示同源的合并几何计算，不重复计入已有开挖；草稿与临时测量不计入。不同深度接口保留高差台阶。</p>
     </section>
     {error && <p role="alert" className="input-error">{error}</p>}
-    <p className="scope-note">M7：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑，画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。单槽土方量按解析公式估算，连接补挖按合并几何修正；文件保存与撤销历史尚未实现。</p>
-  </aside></>;
+    <p className="scope-note">M8：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑，画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。单槽土方量按解析公式估算，连接补挖按合并几何修正。文件打开/保存与 50 步撤销重做已可用；Electron 与 EXE 属 M10。</p>
+  </aside>
+  {pendingAction && <UnsavedDialog action={pendingAction.kind} message={pendingAction.message} busy={busy}
+    gatewayKind={gateway.kind} onChoose={choice => void chooseUnsaved(choice)} />}</>;
 }
