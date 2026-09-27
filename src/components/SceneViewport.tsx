@@ -14,8 +14,9 @@ import { MIN_RING_NODES } from '../core/geometry/trenchOutline';
 import type { SnapResolution, SnapTarget } from '../core/geometry/snapTargets';
 import { ProjectStore } from '../store/ProjectStore';
 import type { Command, Prepared } from '../store/ProjectStore';
-import { createBrowserFileGateway } from '../core/io/fileGateway';
+import { createFileGateway } from '../core/io/desktopFileService';
 import type { FileGateway, SaveTarget } from '../core/io/fileGateway';
+import { confirmWindowClose, subscribeWindowCloseRequest } from '../core/io/desktopWindow';
 import { PROJECT_FILE_EXTENSION, parseProject } from '../core/io/projectSchema';
 import { PIT_LABELS, defaultPitDraft, pitFromDraft, trenchFromDraft } from '../core/model/project';
 import type { ExcavationElement, PitDraftParams, Point2, Project, Result, TrenchSection } from '../core/model/project';
@@ -63,12 +64,12 @@ export function SceneViewport(): ReactElement {
   const [measureLabel, setMeasureLabel] = useState<{ x: number; y: number; text: string } | null>(null);
   /** M9 状态栏坐标：只在俯视图跟随光标，取整到厘米以避免无意义的重复渲染。 */
   const [cursor, setCursor] = useState<Point2 | null>(null);
-  // M8 文档会话：文件服务、当前写入目的地、保存状态与未保存确认。
-  const [gateway] = useState<FileGateway>(() => createBrowserFileGateway());
+  // M8 文档会话：文件服务（M10 起自动选择桌面/浏览器实现）、当前写入目的地、保存状态与未保存确认。
+  const [gateway] = useState<FileGateway>(() => createFileGateway());
   const [saveTarget, setSaveTarget] = useState<SaveTarget | null>(null);
   const [doc, setDoc] = useState(() => ({ name: store.getSnapshot().name, dirty: store.isDirty(), canUndo: store.canUndo, canRedo: store.canRedo }));
   const [busy, setBusy] = useState(false);
-  const [pendingAction, setPendingAction] = useState<{ kind: 'new' | 'open'; message: string } | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ kind: 'new' | 'open' | 'close'; message: string } | null>(null);
   const [pendingExport, setPendingExport] = useState<{ text: string; name: string } | null>(null);
   const busyRef = useRef(false);
   const snapTargets = useRef<SnapTarget[]>([]);
@@ -465,8 +466,9 @@ export function SceneViewport(): ReactElement {
     setSaveTarget(opened.value.target); setPendingExport(null);
     resetSessionUi(); syncDoc();
   }
-  async function continueAction(action: { kind: 'new' | 'open' }): Promise<void> {
+  async function continueAction(action: { kind: 'new' | 'open' | 'close' }): Promise<void> {
     if (action.kind === 'new') startNew();
+    else if (action.kind === 'close') { setPendingAction(null); confirmWindowClose(); }
     else await openFromFile();
   }
   function requestNew(): void {
@@ -501,6 +503,14 @@ export function SceneViewport(): ReactElement {
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [store]);
+
+  // M10 桌面关闭流程：主进程拦截关闭后请求 renderer 决定；浏览器环境订阅是无操作。
+  // 忙碌或已有待确认动作时忽略本次关闭请求，等用户完成当前决定后再次关闭。
+  useEffect(() => subscribeWindowCloseRequest(() => {
+    if (busyRef.current || pendingAction !== null) return;
+    if (store.isDirty()) setPendingAction({ kind: 'close', message: '' });
+    else confirmWindowClose();
+  }), [store, pendingAction]);
 
   // 每次渲染后刷新确认/取消入口，键盘监听始终调用最新实现（确认本身也读实时草稿）。
   useEffect(() => { shortcuts.current = { finish: finishTrench, cancel: cancelDrawing, undo, redo }; });
@@ -594,7 +604,7 @@ export function SceneViewport(): ReactElement {
       <p className="scope-note">单槽估算之和加连接修正。连接增量按显示同源的合并几何计算，不重复计入已有开挖；草稿与临时测量不计入。不同深度接口保留高差台阶。</p>
     </section>
     {error && <p role="alert" className="input-error">{error}</p>}
-    <p className="scope-note">M9：左侧选择/绘制基槽/放置基坑/测量与删除，俯视单击绘制（双击/Enter 完成、Esc 取消），画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。单槽土方量按解析公式估算，连接补挖按合并几何修正。文件打开/保存与 50 步撤销重做已可用；Electron 与 EXE 属 M10。</p>
+    <p className="scope-note">M9：左侧选择/绘制基槽/放置基坑/测量与删除，俯视单击绘制（双击/Enter 完成、Esc 取消），画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。单槽土方量按解析公式估算，连接补挖按合并几何修正。文件打开/保存与 50 步撤销重做已可用；桌面（Electron）版本文件读写走原生对话框与可恢复写入，关闭窗口前会确认未保存修改。</p>
     </aside>
     <div className="bottom-bar">
       <ViewControls view={view} grid={grid} snap={snap} ready={status.ready} viewLocked={toolActive}

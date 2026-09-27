@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/app/App';
@@ -996,5 +996,90 @@ describe('M9 界面与教学体验', () => {
     const top = screen.getByRole('button', { name: '俯视' });
     top.focus();
     expect(top).toHaveFocus();
+  });
+});
+
+/** M10 桌面关闭桥：模拟 preload 暴露的 earthworkWindow，收集关闭请求与确认。 */
+const closeBridge = vi.hoisted(() => {
+  const listeners: Array<() => void> = [];
+  const confirm = vi.fn();
+  return {
+    confirm,
+    requestClose: (): void => { for (const listener of [...listeners]) listener(); },
+    install: (): void => {
+      (globalThis as { earthworkWindow?: unknown }).earthworkWindow = {
+        onRequestClose: (callback: () => void) => {
+          listeners.push(callback);
+          return () => { const index = listeners.indexOf(callback); if (index >= 0) listeners.splice(index, 1); };
+        },
+        confirmClose: confirm,
+      };
+    },
+    reset: (): void => { listeners.length = 0; confirm.mockClear(); },
+    uninstall: (): void => { delete (globalThis as { earthworkWindow?: unknown }).earthworkWindow; },
+  };
+});
+
+describe('M10 桌面关闭流程（保存/不保存/取消后才确认关闭）', () => {
+  /** 关闭请求会触发 renderer 状态更新，用 act 包裹避免 React 告警。 */
+  const requestClose = (): void => { act(() => { closeBridge.requestClose(); }); };
+  beforeEach(() => { closeBridge.install(); closeBridge.reset(); });
+  afterEach(() => { closeBridge.uninstall(); });
+
+  it('干净工程请求关闭：不弹对话框，直接确认关闭', () => {
+    render(<App />);
+    requestClose();
+    expect(closeBridge.confirm).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('未保存时请求关闭：取消保留工程，不保存才确认关闭', async () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    requestClose();
+    const dialog = screen.getByRole('dialog', { name: '未保存的修改' });
+    expect(dialog).toHaveTextContent('关闭窗口将丢弃这些修改。');
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(closeBridge.confirm).not.toHaveBeenCalled();
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+
+    requestClose();
+    fireEvent.click(screen.getByRole('button', { name: '不保存并继续' }));
+    await waitFor(() => expect(closeBridge.confirm).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('选择保存并继续：保存成功后才确认关闭；失败则保留窗口与工程', async () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    requestClose();
+    fireEvent.click(screen.getByRole('button', { name: '保存并继续' }));
+    await waitFor(() => expect(closeBridge.confirm).toHaveBeenCalledTimes(1));
+    expect(gateway.save).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    // 再次编辑后关闭并保存失败：停留在对话框，窗口保持打开
+    fireEvent.change(screen.getByRole('textbox', { name: '开挖深度（m）' }), { target: { value: '4' } });
+    gateway.save.mockResolvedValueOnce({ ok: false, issues: [{ code: 'io', path: '', message: '磁盘只读' }] });
+    requestClose();
+    fireEvent.click(screen.getByRole('button', { name: '保存并继续' }));
+    await screen.findByText(/保存失败，未执行原动作/);
+    expect(closeBridge.confirm).toHaveBeenCalledTimes(1); // 失败不新增确认
+    expect(screen.getByRole('dialog')).toBeVisible();
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+  });
+
+  it('已有待确认动作时忽略关闭请求：新建对话框保持原样，不被覆盖', () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    fireEvent.click(screen.getByRole('button', { name: '新建' }));
+    requestClose();
+    expect(screen.getByRole('dialog')).toHaveTextContent('继续新建工程会丢弃这些修改。');
+    expect(closeBridge.confirm).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    // 取消后关闭请求不再被挡：工程仍脏，走关闭确认对话框
+    requestClose();
+    expect(screen.getByRole('dialog', { name: '未保存的修改' })).toHaveTextContent('关闭窗口将丢弃这些修改。');
   });
 });
