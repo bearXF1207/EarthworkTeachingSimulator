@@ -29,22 +29,24 @@ const devUrl = await new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('vite dev server 30s 内未就绪')), 30_000);
   vite.stdout.on('data', chunk => {
     process.stdout.write(chunk);
-    const match = /Local:\s+(http:\/\/127\.0\.0\.1:\d+\/)/.exec(String(chunk));
+    // vite 输出带 ANSI 颜色码（Local: 与 URL 之间夹着转义序列），先剥离再匹配。
+    const text = String(chunk).replace(/\u001B\[[0-9;]*m/g, '');
+    const match = /Local:\s+(http:\/\/127\.0\.0\.1:\d+\/)/.exec(text);
     if (match) { clearTimeout(timer); resolve(match[1]); }
   });
   vite.once('exit', code => { clearTimeout(timer); reject(new Error(`vite 提前退出（${code}）`)); });
 });
 
 console.log(`启动 Electron（开发模式，加载 ${devUrl}）`);
-const child = spawn(process.execPath, [electronBinary, mainEntry], {
+const child = spawn(electronBinary, [mainEntry], {
   cwd: root,
   stdio: 'inherit',
   env: { ...process.env, EARTHWORK_DEV_SERVER_URL: devUrl },
 });
 
-const stopVite = (): void => { if (vite.exitCode === null) vite.kill(); };
+const stopVite = () => { if (vite.exitCode === null) vite.kill(); };
 child.on('exit', code => { stopVite(); process.exitCode = code ?? 0; });
 vite.on('exit', () => { if (child.exitCode === null) child.kill(); });
-for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => { child.kill(); stopVite(); process.exit(1); });
 }

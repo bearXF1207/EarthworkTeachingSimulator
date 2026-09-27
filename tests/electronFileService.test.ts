@@ -1,9 +1,10 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir, platform } from 'node:os';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
-  MAX_FILE_BYTES, MAX_FILE_CHARACTERS as MAX_CHARS_ELECTRON, PROJECT_FILE_EXTENSION as EXT_ELECTRON,
+  IPC, MAX_FILE_BYTES, MAX_FILE_CHARACTERS as MAX_CHARS_ELECTRON, PROJECT_FILE_EXTENSION as EXT_ELECTRON,
   isSafeBaseName, validateSaveAsPayload, validateSaveExistingPayload, withProjectExtension, writeFileAtomic,
 } from '../electron/fileService';
 import { MAX_FILE_CHARACTERS, PROJECT_FILE_EXTENSION } from '../src/core/io/projectSchema';
@@ -29,6 +30,15 @@ describe('M10 IPC 载荷校验', () => {
     expect(EXT_ELECTRON).toBe(PROJECT_FILE_EXTENSION);
     expect(MAX_CHARS_ELECTRON).toBe(MAX_FILE_CHARACTERS);
     expect(MAX_FILE_BYTES).toBe(MAX_FILE_CHARACTERS * 3);
+  });
+
+  it('preload 自包含：沙箱下不能 require 本地模块，通道常量必须与 fileService 保持一致', async () => {
+    const preloadSource = await readFile(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'electron', 'preload.ts'), 'utf8');
+    expect(preloadSource).not.toMatch(/from '\.\//); // preload 不允许引入任何本地模块
+    for (const channel of Object.values(IPC)) expect(preloadSource).toContain(`'${channel}'`);
+    expect(preloadSource).toContain("exposeInMainWorld('earthworkFileService'");
+    expect(preloadSource).toContain("exposeInMainWorld('earthworkWindow'");
   });
 
   it('另存为载荷：合法中文与空格基本名通过，路径分隔符/越界内容/非字符串拒绝', () => {
