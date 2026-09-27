@@ -1,22 +1,27 @@
 {
   "name": "earthwork-teaching-simulator",
+  "description": "土方开挖教学模拟器：三维基坑与基槽教学工具（离线 Windows 桌面应用）",
+  "version": "0.10.0",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
+  "main": "dist-electron/main.js",
   "engines": {
     "node": ">=24.15.0 <25",
     "npm": ">=11 <12"
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "typecheck": "tsc -b",
+    "dev:electron": "node scripts/dev-electron.mjs",
+    "typecheck": "tsc -b && tsc -p electron --noEmit",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
     "build": "npm run typecheck && vite build",
+    "build:electron": "tsc -p electron && node scripts/finish-electron-build.mjs",
+    "package": "npm run build && npm run build:electron && electron-builder --win portable && node scripts/release-info.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "smoke": "node scripts/smoke.mjs",
-    "check": "npm run typecheck && npm run lint && npm test && npm run build && npm run smoke"
+    "check": "npm run typecheck && npm run lint && npm test && npm run build && npm run build:electron && npm run smoke"
   },
   "dependencies": {
     "react": "19.3.0",
@@ -32,6 +37,8 @@
     "@types/react-dom": "19.3.0",
     "@types/three": "0.186.0",
     "@vitejs/plugin-react": "6.1.1",
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3",
     "eslint": "10.11.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.7",
@@ -41,5 +48,36 @@
     "typescript-eslint": "8.70.0",
     "vite": "8.3.0",
     "vitest": "4.1.11"
+  },
+  "build": {
+    "appId": "org.earthwork.teaching.simulator",
+    "productName": "土方开挖教学模拟器",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json",
+      "!**/node_modules/**",
+      "!**/src/**",
+      "!**/tests/**",
+      "!**/electron/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "EarthworkTeachingSimulator-${version}-x64-portable.exe"
+    }
   }
 }
