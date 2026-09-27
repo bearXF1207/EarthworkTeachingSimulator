@@ -2,7 +2,7 @@
 
 用于理解平面布置、底部尺寸、开挖深度、放坡参数与三维形态/预计土方量之间的关系。目标是在 Windows 10/11 完全离线运行；最终通过 Electron 分发 Portable 应用。
 
-**当前完成 M9：在 M8 的文档能力之上重做界面与教学体验——三列工作区（顶部文档栏横跨整行 / 左侧施工工具 / 中间三维场地 / 右侧绘制与参数 / 底部视角控制与状态栏）；工具入口集中到左侧面板，当前工具用 `aria-pressed` 表达，删除入口按选中对象命名；状态栏始终以文字显示当前工具、俯视光标的地面坐标、网格/吸附开关、当前工具的操作提示、对象数与保存状态；属性与草稿输入带 `min`/`max` 与取值范围提示，被拒绝时用 `aria-invalid` 加中文原因同时表达；不可用操作一律禁用并在 `title` 与面板说明里写出原因；宽屏三列、≤1180px 转为两列横排工具、≤800px 单列堆叠，均无横向滚动。工具名称与操作提示集中在 `ToolPanel/toolLabels.ts`，状态栏与工具按钮共用同一份文案。未实现四视角之间的过渡动画（手册列为可选，且会干扰投影与拾取）。当前 17 个测试文件 237 项测试，`npm run check` 全绿。Electron 与 EXE（M10）尚未实现。**
+**当前完成 M10：在 M9 的界面之上交付 Electron 桌面与 Windows Portable——`electron/` 独立编译主进程/preload（CommonJS 产物 + 独立 tsconfig）；renderer 保持 `contextIsolation`/`sandbox` 开启、无 Node 集成，preload 只暴露 `open`/`saveAs`/`saveExisting` 与 `onRequestClose`/`confirmClose` 六个函数，invoke 通道白名单，沙箱下 preload 不 require 任何本地模块（源文本一致性测试守护）；文件读写全部由主进程完成：载荷先校验（内容 ≤8M 字符、安全基本名、绝对路径、无空字节），"写回"只允许本会话经打开/另存为确认过的授权路径；写入用同目录临时文件 + fsync + 重命名替换，失败清理临时文件并保留旧工程；窗口关闭被拦截后走"保存/不保存/取消"，受控标记防关闭循环，renderer 崩溃或未就绪直接放行；生产加载 `dist/index.html` 相对资源，禁新窗口/非预期导航/外部依赖。`npm run package` 产出免安装 Portable EXE 与 SHA-256 校验信息。实机验收：Electron 加载生产构建安全检查 8/8 通过，dev 双启动正常。当前 19 个测试文件 259 项测试，`npm run check` 全绿。Windows 10/11 干净断网环境的完整验收未执行（缺独立测试机），已知限制见 [M10 报告](docs/M10_REPORT.md)。**
 
 ## 快速开始
 
@@ -17,21 +17,26 @@ npm run dev
 
 打开终端显示的本地地址（默认 `http://127.0.0.1:5173`）。如端口被占用，使用 `npm run dev -- --port 5174`。按 Ctrl+C 关闭。安装依赖通常需要网络，安装后运行应用不依赖外部服务。
 
-不要双击 `dist/index.html` 验证网页构建；浏览器模块安全限制可能阻止 file 协议模块加载。网页构建用 `npm run preview`，最终本地桌面加载在 M10 验收。
+桌面（Electron）开发模式：`npm run build:electron` 后运行 `npm run dev:electron`，脚本先启动 vite 再用 `EARTHWORK_DEV_SERVER_URL` 指示 Electron 加载开发地址；退出 Electron 会同时结束 vite。
+
+不要双击 `dist/index.html` 验证网页构建；浏览器模块安全限制可能阻止 file 协议模块加载。网页构建用 `npm run preview`，本地桌面加载由 Electron 完成，Portable EXE 用 `npm run package` 生成。
 
 ## 检查命令
 
 | 命令 | 作用 |
 | --- | --- |
 | `npm run dev` | 启动本地开发服务器 |
-| `npm run typecheck` | 检查应用、测试及 Vite 配置的 TypeScript 类型 |
+| `npm run dev:electron` | Electron 开发模式：vite + 主进程双启动（需先 `npm run build:electron`） |
+| `npm run typecheck` | 检查应用、测试、Vite 配置与 Electron 主进程的 TypeScript 类型 |
 | `npm run lint` | ESLint；警告同样使命令失败 |
 | `npm test` | 单次运行单元/组件测试 |
 | `npm run test:watch` | 测试监听模式 |
 | `npm run build` | 类型检查后生成 `dist/` |
+| `npm run build:electron` | 编译 Electron 主进程/preload 到 `dist-electron/`（CommonJS） |
+| `npm run package` | build + build:electron 后用 electron-builder 产出 Portable EXE 与校验信息 |
 | `npm run preview` | 预览已经生成的构建 |
 | `npm run smoke` | 检查 dev/preview 的首页和本地资产；需先 build；自动关闭测试服务 |
-| `npm run check` | 依次 typecheck → lint → test → build → smoke，失败立即停止 |
+| `npm run check` | 依次 typecheck → lint → test → build → build:electron → smoke，失败立即停止 |
 
 依赖采用精确版本和 npm 锁文件。更换机器使用 `npm ci`；不要顺手升级 TypeScript 7，它超出当前 typescript-eslint 的支持范围。Node 低于24.15会因测试环境依赖要求被拒绝。
 
@@ -50,10 +55,17 @@ npm run dev
 - [M7 验证报告](docs/M7_REPORT.md)：解析土方量、工程量读数、两点距离测量与网格几何交叉验证。
 - [M8 验证报告](docs/M8_REPORT.md)：项目文件格式与严格校验、打开/保存/另存为、dirty 基线与离开提醒、50 步撤销重做。
 - [M9 验证报告](docs/M9_REPORT.md)：三列工作区、工具面板与状态栏、输入范围提示与 aria-invalid、禁用原因、响应式与聚焦样式。
+- [M10 验证报告](docs/M10_REPORT.md)：Electron 主进程与受限 preload、原生文件读写与授权路径、可恢复写入、关闭三选项、Portable EXE 与安全边界实机验收。
 - [沟槽连接修复报告](docs/JUNCTION_FIX_REPORT.md)：双向贯通、补挖量、边界条件与旧诊断勘误。
 - [仓库铁律](AGENTS.md)：改动需要相关测试和 Git commit。
 
-后续执行 M10（Electron 与 Windows Portable 交付）时，先阅读设计的验证章节与手册 M10 章节，不因原任务书末尾的历史指令重新初始化项目。
+### M10 操作
+
+- 桌面运行：`npm run dev:electron`（开发，加载 vite）或直接运行 `release/` 中的 Portable EXE（生产，加载本地 `dist/`，无需 Node.js/服务器/网络）。
+- 文件：`打开…`/`另存为…` 走原生对话框，主进程读写；`保存`写回原路径；会话内只允许写回经打开/另存为确认过的授权路径。写入先用同目录临时文件再原子替换，失败时保留旧文件并提示原因；`.excavation` 格式与校验规则和浏览器版完全一致。
+- 关闭：有未保存修改时关窗会弹出`保存/不保存/取消`；保存成功才真正关闭，失败或取消都保留窗口。renderer 崩溃或未加载完成时直接放行，不会卡死关闭流程。
+- 安全边界：renderer 无 `require`/`process`/`ipcRenderer`，preload 只暴露六个函数（`open`/`saveAs`/`saveExisting`/`onRequestClose`/`confirmClose` 及卸载订阅），非白名单通道不可触达；禁新窗口、非预期导航与 webview；应用图标、字体、Three.js 全部随包分发，无运行时外部依赖。
+- 发行包：`npm run package` 产出 `release/EarthworkTeachingSimulator-<版本>-x64-portable.exe`（免安装、单文件）与`校验信息.txt`（版本、SHA-256、用法）；EXE 未做代码签名，首次运行可能触发 SmartScreen 提示。
 
 ### M9 操作
 
@@ -130,7 +142,8 @@ src/
     validation/            数值、折线、多边形、工程校验与开口冲突
     calculation/           测量、基槽与基坑体积、工程量汇总（M7 纯函数）
     commands/              CommandManager：最多 50 步撤销/重做栈
-    io/                    projectSchema（.excavation 序列化/严格解析）、fileGateway（文件服务合同与浏览器适配）
+    io/                    projectSchema（.excavation 序列化/严格解析）、fileGateway（文件服务合同与浏览器适配）、
+                           desktopFileService（同一合同的 Electron 适配与宿主检测工厂）、desktopWindow（关闭请求订阅）
   scene/                   SceneManager（唯一持有 Three 对象）、CameraManager、
                            GroundManager（带孔地面与岛补片）、groundTriangulation（三角化与接触轮廓回退）、
                            MeshFactory、PreviewLine、DrawingManager（绘制状态机）、
@@ -138,8 +151,12 @@ src/
   store/                   ProjectStore：校验 + 准备 + 原子提交（收边、历史、dirty 基线、原子加载）
 tests/                     Vitest 测试（含 scene-test-kit 假渲染器）与 DOM 初始化
 scripts/smoke.mjs          实际启动开发/预览服务器的 HTTP 验证
-docs/                      校核、实施手册与 M0–M9 阶段报告
-electron/                  M10 占位说明，无 Electron 依赖或实现
+                           dev-electron.mjs（vite+Electron 双启动）、make-icon.mjs（生成应用图标）、
+                           finish-electron-build.mjs（CJS 标记）、release-info.mjs（EXE 校验信息）
+docs/                      校核、实施手册与 M0–M10 阶段报告
+electron/                  M10 Electron 主进程：main.ts（窗口/导航拦截/关闭流程）、preload.ts（受限桥）、
+                           fileService.ts（载荷校验/授权路径/原子写入）、fileIpc.ts（IPC 装配）、独立 tsconfig
+build/                     应用图标（icon.ico，由 scripts/make-icon.mjs 生成）
 ```
 
 只有仍为空的占位目录用 `.gitkeep` 纳入版本控制；已有真实文件的目录不再保留 `.gitkeep`。业务数据和数学计算不依赖 React/Three；复杂几何不放入组件；SceneManager 从 M1 统一拥有 Three 对象与资源生命周期。
@@ -152,4 +169,6 @@ M8 起文档状态由 `ProjectStore` 统一管理：所有已提交动作经同�
 
 M9 把界面与教学体验独立于几何与数据：工具名称与操作提示集中在 `components/ToolPanel/toolLabels.ts`，状态栏与工具按钮共用同一份文案；状态栏只读取已有界面状态、不触发任何命令，也不用颜色表达状态。工作区用 CSS Grid 三列布局，`minmax(0, 1fr)` 保证中间场地可以收缩，因此各宽度都没有横向滚动；断点只改变排列方式，不改变任何交互或数据行为。属性输入的 `min`/`max` 只作界面提示与浏览器辅助，数值是否接受仍由 `core/validation` 决定，避免出现第二套业务校验。
 
-运行时使用系统字体及本地依赖，没有在线字体/贴图/CDN。M1–M9 已做真实浏览器 WebGL 与鼠标/键盘验收；当前测试不证明 Windows EXE、专业工程量或放坡安全性。构建仍有 Three 主包超过500kB的非阻塞体积提醒，未通过提高阈值隐藏。
+M10 用 Electron 承载同一前端：主进程/preload 在 `electron/` 独立编译（CommonJS，独立 tsconfig），renderer 侧以 `core/io/desktopFileService.ts` 实现同一个 `FileGateway` 合同——业务核心不感知宿主是浏览器还是 Electron，浏览器适配器仅用于开发。安全模型：`contextIsolation`+`sandbox` 开启、无 Node 集成；主进程持有一个会话级授权路径注册表，"保存"只能写回本会话确认过的文件；原子写入（临时文件 + fsync + 重命名）保证失败不损坏旧工程；关闭流程用 `closeConfirmed` 与 renderer 存活标记防循环。`npm run check` 包含主进程类型检查与 CJS 产物构建。
+
+运行时使用系统字体及本地依赖，没有在线字体/贴图/CDN。M1–M9 已做真实浏览器 WebGL 与鼠标/键盘验收；M10 已做 Electron 实机安全边界与 dev 双启动验收。当前测试不证明 Windows 10/11 干净断网环境的完整验收（未执行，缺独立测试机）、专业工程量或放坡安全性。构建仍有 Three 主包超过500kB的非阻塞体积提醒，未通过提高阈值隐藏。
