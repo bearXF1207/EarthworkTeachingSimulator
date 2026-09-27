@@ -1,6 +1,7 @@
 import type { ReactElement } from 'react';
 import type { Project, Result, Trench } from '../../core/model/project';
 import { isClosedRing } from '../../core/geometry/trenchOutline';
+import { MAX_COORDINATE, MAX_SIZE, MAX_SLOPE, MIN_SIZE, MIN_SLOPE } from '../../core/validation/limits';
 import { NumberFields } from './NumberFields';
 import type { NumberField } from './NumberFields';
 
@@ -10,13 +11,15 @@ const nodeLabel = (index: number, last: number): string =>
 
 export function TrenchEditor({ trench, onUpdate }: { trench: Trench; onUpdate: (trench: Trench) => Result<Project> }): ReactElement {
   const last = trench.points.length - 1;
+  const coordinate = { min: -MAX_COORDINATE, max: MAX_COORDINATE };
   const fields: NumberField[] = [
     ...trench.points.flatMap((point, i) => [
-      { key: `x${i}`, label: `${nodeLabel(i, last)} X（m）`, value: point.x },
-      { key: `y${i}`, label: `${nodeLabel(i, last)} Y（m）`, value: point.y },
+      { key: `x${i}`, label: `${nodeLabel(i, last)} X（m）`, value: point.x, ...coordinate },
+      { key: `y${i}`, label: `${nodeLabel(i, last)} Y（m）`, value: point.y, ...coordinate },
     ]),
-    { key: 'bottomWidth', label: '底宽（m）', value: trench.bottomWidth },
-    { key: 'depth', label: '开挖深度（m）', value: trench.depth }, { key: 'slope', label: '放坡系数 m', value: trench.slope },
+    { key: 'bottomWidth', label: '底宽（m）', value: trench.bottomWidth, min: MIN_SIZE, max: MAX_SIZE },
+    { key: 'depth', label: '开挖深度（m）', value: trench.depth, min: MIN_SIZE, max: MAX_SIZE },
+    { key: 'slope', label: '放坡系数 m', value: trench.slope, min: MIN_SLOPE, max: MAX_SLOPE },
   ];
   return <div className="object-editor">
     <h3>折线基槽参数</h3>

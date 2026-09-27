@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../src/app/App';
@@ -890,5 +890,111 @@ describe('M7 工程量与测量界面', () => {
     fireEvent.click(screen.getByRole('button', { name: '选择' }));
     clickGround(10, 0);
     expect(screen.getByText('直线基槽工程量')).toBeVisible();
+  });
+});
+
+describe('M9 界面与教学体验', () => {
+  it('状态栏显示工具、网格、吸附、对象数与保存状态，俯视时跟随光标坐标', () => {
+    render(<App />);
+    const status = screen.getByRole('group', { name: '状态栏' });
+    expect(status).toHaveTextContent('工具：选择');
+    expect(status).toHaveTextContent('坐标：—');
+    expect(status).toHaveTextContent('网格：显示');
+    expect(status).toHaveTextContent('吸附：1m 网格开');
+    expect(status).toHaveTextContent('对象：0 个');
+    expect(status).toHaveTextContent('保存状态：已保存');
+    // 俯视时指针在画布内移动：显示取整到厘米的地面坐标；移到画布外即清空
+    fireEvent.click(screen.getByRole('button', { name: '俯视' }));
+    fireEvent.pointerMove(canvasElement(), groundClient(10, 5));
+    expect(status).toHaveTextContent('坐标：X 10.00 · Y 5.00');
+    fireEvent.pointerMove(canvasElement(), { clientX: -50, clientY: -50 });
+    expect(status).toHaveTextContent('坐标：—');
+    // 开关状态同时用文字表达，不只靠勾选框
+    fireEvent.click(screen.getByRole('checkbox', { name: '显示网格' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '吸附1m网格' }));
+    expect(status).toHaveTextContent('网格：隐藏');
+    expect(status).toHaveTextContent('吸附：关');
+    // 对象数与保存状态随工程变化
+    drawTrench([[0, 0], [20, 0]]);
+    expect(status).toHaveTextContent('对象：1 个');
+    expect(status).toHaveTextContent('保存状态：未保存');
+  });
+
+  it('左侧工具面板切换工具，无选中时删除禁用并说明原因', () => {
+    const reason = '未选择对象：请先在画布或“当前对象”中选择要删除的对象';
+    render(<App />);
+    const panel = screen.getByRole('complementary', { name: '施工工具' });
+    const remove = screen.getByRole('button', { name: '删除对象' });
+    expect(remove).toBeDisabled();
+    expect(remove).toHaveAttribute('title', reason);
+    expect(within(panel).getByText(reason)).toBeVisible();
+    // 切换工具用 aria-pressed 表达，无需依赖颜色
+    fireEvent.click(screen.getByRole('button', { name: '放置基坑' }));
+    expect(screen.getByRole('button', { name: '放置基坑' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '选择' })).toHaveAttribute('aria-pressed', 'false');
+    // 放置并选中对象后，删除入口按类型命名且可用
+    clickGround(0, 0);
+    const removePit = screen.getByRole('button', { name: '删除当前基坑' });
+    expect(removePit).toBeEnabled();
+    fireEvent.click(removePit);
+    expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
+    expect(screen.getByRole('button', { name: '删除对象' })).toBeDisabled();
+  });
+
+  it('属性输入给出取值范围提示，非法输入用 aria-invalid 与文字同时表达', () => {
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    const depth = screen.getByRole('textbox', { name: '开挖深度（m）' });
+    expect(depth).toHaveAttribute('title', '取值范围 0.02～1000');
+    expect(depth).toHaveAttribute('min', '0.02');
+    expect(depth).toHaveAttribute('max', '1000');
+    // 越界值被拒绝：字段标为无效并给出文字原因，模型保持不变
+    fireEvent.change(depth, { target: { value: '0' } });
+    expect(depth).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('alert')).toHaveTextContent('必须是 0.02～1000 范围内的有限数值');
+    expect(screen.getByText(/1 个开挖对象/)).toBeVisible();
+    // 恢复合法值：无效标记与错误提示同时清除
+    fireEvent.change(depth, { target: { value: '3' } });
+    expect(depth).not.toHaveAttribute('aria-invalid');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('绘制期间锁定视角，禁用按钮给出原因提示', () => {
+    render(<App />);
+    expect(screen.getByRole('button', { name: '自由视角' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
+    const free = screen.getByRole('button', { name: '自由视角' });
+    expect(free).toBeDisabled();
+    expect(free).toHaveAttribute('title', '绘制期间锁定视角');
+    expect(screen.getByRole('button', { name: '俯视' })).toHaveAttribute('aria-pressed', 'true');
+    // 取消绘制后恢复可用并给出常规说明
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: '自由视角' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '自由视角' })).toHaveAttribute('title', '切换到自由视角');
+  });
+
+  it('键盘可聚焦工具与视角控制，输入法组合按键不触发场景命令', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    // 工具按钮用原生 button：可获得焦点并通过 Enter 激活
+    const tool = screen.getByRole('button', { name: '绘制基槽' });
+    tool.focus();
+    expect(tool).toHaveFocus();
+    fireEvent.click(tool);
+    expect(tool).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.keyDown(window, { key: 'Enter' });
+    // 尚无节点：只提示，不产生命令
+    expect(screen.getByRole('alert')).toHaveTextContent('至少需要两个节点');
+    expect(dispatch).not.toHaveBeenCalled();
+    // 中文输入法组合中的 Enter 一律忽略
+    const composing = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
+    Object.defineProperty(composing, 'isComposing', { value: true });
+    window.dispatchEvent(composing);
+    expect(dispatch).not.toHaveBeenCalled();
+    // 退出绘制后视角控制恢复可用且可获得焦点
+    fireEvent.keyDown(window, { key: 'Escape' });
+    const top = screen.getByRole('button', { name: '俯视' });
+    top.focus();
+    expect(top).toHaveFocus();
   });
 });

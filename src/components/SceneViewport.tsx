@@ -21,6 +21,8 @@ import { PIT_LABELS, defaultPitDraft, pitFromDraft, trenchFromDraft } from '../c
 import type { ExcavationElement, PitDraftParams, Point2, Project, Result, TrenchSection } from '../core/model/project';
 import { ViewControls } from './ViewControls/ViewControls';
 import { DocumentBar } from './TopBar/DocumentBar';
+import { ToolPanel } from './ToolPanel/ToolPanel';
+import { StatusBar } from './StatusBar/StatusBar';
 import { UnsavedDialog } from './dialogs/UnsavedDialog';
 import type { UnsavedChoice } from './dialogs/UnsavedDialog';
 import { DrawingPanel } from './DrawingPanel/DrawingPanel';
@@ -59,6 +61,8 @@ export function SceneViewport(): ReactElement {
   const [ortho, setOrtho] = useState(false);
   const [snapHint, setSnapHint] = useState('');
   const [measureLabel, setMeasureLabel] = useState<{ x: number; y: number; text: string } | null>(null);
+  /** M9 状态栏坐标：只在俯视图跟随光标，取整到厘米以避免无意义的重复渲染。 */
+  const [cursor, setCursor] = useState<Point2 | null>(null);
   // M8 文档会话：文件服务、当前写入目的地、保存状态与未保存确认。
   const [gateway] = useState<FileGateway>(() => createBrowserFileGateway());
   const [saveTarget, setSaveTarget] = useState<SaveTarget | null>(null);
@@ -120,7 +124,7 @@ export function SceneViewport(): ReactElement {
   const failure = (result: Result<Project>): string => result.ok ? '' : result.issues.map(i => `${i.path}：${i.message}`).join('；');
   const toolActive = draw.kind === 'drawTrench' || draw.kind === 'placePit' || draw.kind === 'measure';
 
-  function changeView(next: ViewMode): void { manager.current?.setView(next); setView(next); }
+  function changeView(next: ViewMode): void { manager.current?.setView(next); setView(next); setCursor(null); }
   function restoreView(): void { if (view !== viewBeforeTool.current) changeView(viewBeforeTool.current); }
 
   /**
@@ -163,6 +167,15 @@ export function SceneViewport(): ReactElement {
       return;
     }
     instance.setPreviewPoints([]);
+  }
+
+  /** M9 状态栏坐标：俯视且指针在画布内时才更新；取整到厘米，数值未变化时不触发重渲染。 */
+  function trackCursor(event: { clientX: number; clientY: number }): void {
+    const instance = manager.current;
+    if (!instance || instance.cameras.mode !== 'top') return;
+    const ground = groundPointFromPointer(event.clientX, event.clientY, instance.cameras.active, instance.domElement.getBoundingClientRect());
+    const next = ground ? { x: Math.round(ground.x * 100) / 100, y: Math.round(ground.y * 100) / 100 } : null;
+    setCursor(previous => previous && next && previous.x === next.x && previous.y === next.y ? previous : next);
   }
 
   /**
@@ -255,6 +268,7 @@ export function SceneViewport(): ReactElement {
   }
   function onPointerUp(): void { commitDrag(); }
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
+    trackCursor(event);
     const pending = drag.current;
     if (pending) {
       const moved = Math.hypot(event.clientX - pending.start.x, event.clientY - pending.start.y) > DRAG_THRESHOLD;
@@ -530,27 +544,39 @@ export function SceneViewport(): ReactElement {
   const active = project.elements.find(e => e.id === selected);
   // 渲染期只读取带保护的合计：连接并集触发几何守卫时退回单槽估算，不中断界面。
   const summary = volumeSummary(project.elements);
-  return <><section className="scene-panel" aria-label="基础三维场景">
-    <div className="scene-heading"><h2>施工场地</h2><span>{VIEW_LABELS[view]} · {project.elements.length} 个开挖对象 · 场地自动扩展</span></div>
-    <div className="viewport" ref={host} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onClick={onClick} onDoubleClick={onDoubleClick}
-      style={toolActive ? { cursor: 'crosshair' } : undefined}>
-      {measureLabel && <span className="measure-label" style={{ left: measureLabel.x, top: measureLabel.y }}>{measureLabel.text}</span>}
-    </div>
-    <div className="scene-status" role={status.ready ? 'status' : 'alert'}>{status.message}</div>
-    <ViewControls view={view} grid={grid} snap={snap} ready={status.ready} viewLocked={toolActive}
-      onView={changeView} onGrid={changeGrid} onSnap={changeSnap} onReset={() => manager.current?.resetCamera()}
-      displayMode={displayMode} hasElements={project.elements.length > 0} onDisplayMode={mode => { manager.current?.setDisplayMode(mode); setDisplayMode(mode); }} />
-    <div className="scene-help"><span>{view === 'free' ? '左键旋转 · 右键平移 · 滚轮缩放' : '左键或右键平移 · 滚轮缩放 · 正交视图锁定旋转'}<br />网格间距 1m · 坐标轴：X 红 / Y 绿 / Z 蓝</span>
-      <button onClick={reload}>重新加载场景</button></div>
-  </section><aside className="next-stage" aria-label="绘制与开挖对象属性">
+  // 删除入口的唯一可见位置在左侧工具面板：无选中对象时禁用并把原因写进提示与说明。
+  const deleteLabel = active ? `删除当前${active.type === 'trench' ? '基槽' : '基坑'}` : '删除对象';
+  const deleteReason = active
+    ? `删除当前选中的${elementLabel(active)}`
+    : '未选择对象：请先在画布或“当前对象”中选择要删除的对象';
+  function deleteActive(): void {
+    if (!active) return;
+    if (dispatch({ type: 'delete', id: active.id }).ok) setSelected('');
+  }
+  return <>
+    {/* M9 布局：顶部文档工具栏横跨整行，其下是左侧工具 / 中间场地 / 右侧参数，底部视角与状态栏横跨整行。 */}
     <DocumentBar name={doc.name} dirty={doc.dirty} canUndo={doc.canUndo} canRedo={doc.canRedo} busy={busy}
       gatewayKind={gateway.kind} pendingExportName={pendingExport?.name ?? null}
       onNew={requestNew} onOpen={requestOpen} onSave={() => void saveDocument(false)} onSaveAs={() => void saveDocument(true)}
       onConfirmExport={confirmExport} onUndo={undo} onRedo={redo} />
+    <ToolPanel active={draw.kind} ready={status.ready} deleteLabel={deleteLabel} canDelete={active !== undefined}
+      deleteReason={deleteReason} onTool={changeTool} onDelete={deleteActive} />
+    <section className="scene-panel" aria-label="基础三维场景">
+    <div className="scene-heading"><h2>施工场地</h2><span>{VIEW_LABELS[view]} · {project.elements.length} 个开挖对象 · 场地自动扩展</span></div>
+    <div className="viewport" ref={host} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onClick={onClick} onDoubleClick={onDoubleClick}
+      onPointerLeave={() => setCursor(null)}
+      style={toolActive ? { cursor: 'crosshair' } : undefined}>
+      {measureLabel && <span className="measure-label" style={{ left: measureLabel.x, top: measureLabel.y }}>{measureLabel.text}</span>}
+    </div>
+    <div className="scene-status" role={status.ready ? 'status' : 'alert'}>{status.message}</div>
+    <div className="scene-help"><span>{view === 'free' ? '左键旋转 · 右键平移 · 滚轮缩放' : '左键或右键平移 · 滚轮缩放 · 正交视图锁定旋转'}<br />网格间距 1m · 坐标轴：X 红 / Y 绿 / Z 蓝</span>
+      <button onClick={reload}>重新加载场景</button></div>
+    </section>
+    <aside className="next-stage" aria-label="绘制与开挖对象属性">
     <h2>绘制与参数</h2>
     <DrawingPanel state={draw} ready={status.ready} message={drawMessage} section={section} pit={pit}
       ortho={ortho} onOrtho={setOrtho} hint={snapHint}
-      onTool={changeTool} onSection={setSection} onPit={setPit} onAdvance={advance} onFinish={finishTrench} onCancel={cancelDrawing}
+      onSection={setSection} onPit={setPit} onAdvance={advance} onFinish={finishTrench} onCancel={cancelDrawing}
       onResetMeasure={resetMeasure} />
     <label>当前对象<select aria-label="当前对象" value={selected} onChange={e => { setSelected(e.target.value); setError(''); }}>
       <option value="">请选择对象</option>{project.elements.map(e => <option key={e.id} value={e.id}>{e.id} · {elementLabel(e)}</option>)}
@@ -558,7 +584,6 @@ export function SceneViewport(): ReactElement {
     {active && <fieldset disabled={!status.ready}>
       {active.type === 'trench' ? <TrenchEditor key={active.id} trench={active} onUpdate={update} />
         : <PitEditor key={active.id} pit={active} onUpdate={update} />}
-      <button onClick={() => { if (dispatch({ type: 'delete', id: active.id }).ok) setSelected(''); }}>删除当前{active.type === 'trench' ? '基槽' : '基坑'}</button>
     </fieldset>}
     {active && <QuantityView key={`q-${active.id}`} element={active} title={elementLabel(active)} />}
     <section className="quantity-summary" aria-label="工程量合计">
@@ -569,8 +594,15 @@ export function SceneViewport(): ReactElement {
       <p className="scope-note">单槽估算之和加连接修正。连接增量按显示同源的合并几何计算，不重复计入已有开挖；草稿与临时测量不计入。不同深度接口保留高差台阶。</p>
     </section>
     {error && <p role="alert" className="input-error">{error}</p>}
-    <p className="scope-note">M8：俯视单击绘制基槽（双击/Enter 完成、Esc 取消）、单击放置三类基坑，画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。单槽土方量按解析公式估算，连接补挖按合并几何修正。文件打开/保存与 50 步撤销重做已可用；Electron 与 EXE 属 M10。</p>
-  </aside>
+    <p className="scope-note">M9：左侧选择/绘制基槽/放置基坑/测量与删除，俯视单击绘制（双击/Enter 完成、Esc 取消），画布点选与拖动编辑、两点距离测量；中心线与坑心按开关吸附 1m 网格，输入框内 Enter 只提交输入段。单槽土方量按解析公式估算，连接补挖按合并几何修正。文件打开/保存与 50 步撤销重做已可用；Electron 与 EXE 属 M10。</p>
+    </aside>
+    <div className="bottom-bar">
+      <ViewControls view={view} grid={grid} snap={snap} ready={status.ready} viewLocked={toolActive}
+        onView={changeView} onGrid={changeGrid} onSnap={changeSnap} onReset={() => manager.current?.resetCamera()}
+        displayMode={displayMode} hasElements={project.elements.length > 0} onDisplayMode={mode => { manager.current?.setDisplayMode(mode); setDisplayMode(mode); }} />
+      <StatusBar tool={draw.kind} ready={status.ready} message={status.message} cursor={cursor}
+        grid={grid} snap={snap} elementCount={project.elements.length} dirty={doc.dirty} busy={busy} />
+    </div>
   {pendingAction && <UnsavedDialog action={pendingAction.kind} message={pendingAction.message} busy={busy}
     gatewayKind={gateway.kind} onChoose={choice => void chooseUnsaved(choice)} />}</>;
 }

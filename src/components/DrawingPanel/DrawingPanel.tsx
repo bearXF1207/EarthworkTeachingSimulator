@@ -5,11 +5,11 @@ import { distance } from '../../core/calculation/measurement';
 import { isClosedRing } from '../../core/geometry/trenchOutline';
 import type { PitDraftParams, TrenchSection } from '../../core/model/project';
 import { PIT_LABELS } from '../../core/model/project';
-import type { DrawingState, ToolKind } from '../../scene/DrawingManager';
+import { MAX_SIZE, MAX_SLOPE, MIN_SIZE, MIN_SLOPE } from '../../core/validation/limits';
+import type { DrawingState } from '../../scene/DrawingManager';
 import { NumberFields } from '../PropertyPanel/NumberFields';
 import type { NumberField } from '../PropertyPanel/NumberFields';
 
-const TOOL_LABELS: Record<ToolKind, string> = { select: '选择', drawTrench: '绘制基槽', placePit: '放置基坑', measure: '测量' };
 const format = (value: number, digits: number): string => value.toFixed(digits);
 
 /** 长度与角度输入：Enter 或按钮提交一段，结果不做网格吸附。 */
@@ -39,14 +39,14 @@ function SegmentForm({ disabled, onAdvance }: { disabled: boolean; onAdvance: (l
 type Props = {
   state: DrawingState; ready: boolean; message: string; hint: string;
   section: TrenchSection; pit: PitDraftParams; ortho: boolean;
-  onTool: (kind: ToolKind) => void; onSection: (section: TrenchSection) => void; onPit: (pit: PitDraftParams) => void;
+  onSection: (section: TrenchSection) => void; onPit: (pit: PitDraftParams) => void;
   onOrtho: (enabled: boolean) => void;
   onAdvance: (length: number, angle: number) => void; onFinish: () => void; onCancel: () => void;
   onResetMeasure: () => void;
 };
 
-/** M5 绘制面板：工具切换、草稿读数与精确输入、基坑放置参数、正交模式与吸附提示。草稿不进入项目数据。 */
-export function DrawingPanel({ state, ready, message, hint, section, pit, ortho, onTool, onSection, onPit, onOrtho, onAdvance, onFinish, onCancel, onResetMeasure }: Props): ReactElement {
+/** M5/M9 参数面板：草稿读数与精确输入、基坑放置参数、正交模式与吸附提示。工具按钮已移至左侧工具面板。草稿不进入项目数据。 */
+export function DrawingPanel({ state, ready, message, hint, section, pit, ortho, onSection, onPit, onOrtho, onAdvance, onFinish, onCancel, onResetMeasure }: Props): ReactElement {
   const nodes = state.kind === 'drawTrench' ? state.nodes : [];
   // 末点回到首点即为首尾闭合：确认后按环形基槽生成，内圈包围的岛保持地面。
   const closed = isClosedRing(nodes);
@@ -59,24 +59,22 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
     ? state.points.length >= 2 ? distance(state.points[0]!, state.points[1]!)
       : state.points.length === 1 && state.cursor ? distance(state.points[0]!, state.cursor) : null
     : null;
-  // 标签带“新建”前缀，与已创建对象的属性标签区分，避免同名输入框歧义。
+  // 标签带“新建”前缀，与已创建对象的属性标签区分，避免同名输入框歧义；min/max 与 core 校验边界一致。
+  const size = { min: MIN_SIZE, max: MAX_SIZE };
   const sectionFields: NumberField[] = [
-    { key: 'bottomWidth', label: '新建基槽底宽（m）', value: section.bottomWidth },
-    { key: 'depth', label: '新建基槽深度（m）', value: section.depth },
-    { key: 'slope', label: '新建基槽坡比 m', value: section.slope },
+    { key: 'bottomWidth', label: '新建基槽底宽（m）', value: section.bottomWidth, ...size },
+    { key: 'depth', label: '新建基槽深度（m）', value: section.depth, ...size },
+    { key: 'slope', label: '新建基槽坡比 m', value: section.slope, min: MIN_SLOPE, max: MAX_SLOPE },
   ];
   const pitFields: NumberField[] = pit.type === 'circular-pit'
-    ? [{ key: 'bottomDiameter', label: '新建基坑底直径（m）', value: pit.bottomDiameter }]
+    ? [{ key: 'bottomDiameter', label: '新建基坑底直径（m）', value: pit.bottomDiameter, ...size }]
     : pit.type === 'rect-pit'
-      ? [{ key: 'bottomLength', label: '新建基坑底长（m）', value: pit.bottomLength }, { key: 'bottomWidth', label: '新建基坑底宽（m）', value: pit.bottomWidth },
+      ? [{ key: 'bottomLength', label: '新建基坑底长（m）', value: pit.bottomLength, ...size },
+        { key: 'bottomWidth', label: '新建基坑底宽（m）', value: pit.bottomWidth, ...size },
         { key: 'rotation', label: '新建基坑旋转角（°）', value: pit.rotation }]
-      : [{ key: 'bottomSize', label: '新建基坑底边长（m）', value: pit.bottomSize }, { key: 'rotation', label: '新建基坑旋转角（°）', value: pit.rotation }];
-  return <section className="draw-panel" aria-label="绘制工具">
-    <div className="create-elements" role="group" aria-label="工具">
-      {(Object.keys(TOOL_LABELS) as ToolKind[]).map(kind =>
-        <button key={kind} disabled={!ready} aria-pressed={state.kind === kind}
-          onClick={() => onTool(kind)}>{TOOL_LABELS[kind]}</button>)}
-    </div>
+      : [{ key: 'bottomSize', label: '新建基坑底边长（m）', value: pit.bottomSize, ...size },
+        { key: 'rotation', label: '新建基坑旋转角（°）', value: pit.rotation }];
+  return <section className="draw-panel" aria-label="绘制与放置参数">
     {message && <p role="alert" className="input-error">{message}</p>}
     {state.kind === 'drawTrench' && <div className="draw-draft">
       <p className="scope-note">已设置 {nodes.length} 个节点{closed ? '（含闭合点）' : ''}：在俯视场地单击添加。确认方式：双击终点、Enter（输入框内用 Ctrl/Cmd+Enter）或“完成基槽”按钮；Esc 取消。绘制期间锁定视角。</p>
@@ -117,8 +115,8 @@ export function DrawingPanel({ state, ready, message, hint, section, pit, ortho,
         return { ok: true, value: null };
       }} />
       <NumberFields fields={[
-        { key: 'depth', label: '新建基坑深度（m）', value: pit.depth },
-        { key: 'slope', label: '新建基坑坡比 m', value: pit.slope },
+        { key: 'depth', label: '新建基坑深度（m）', value: pit.depth, ...size },
+        { key: 'slope', label: '新建基坑坡比 m', value: pit.slope, min: MIN_SLOPE, max: MAX_SLOPE },
       ]} apply={values => {
         onPit({ ...pit, depth: values.depth!, slope: values.slope! });
         return { ok: true, value: null };
