@@ -603,7 +603,14 @@ describe('M5 俯视绘制与放置', () => {
     const updated = dispatch.mock.results.at(-1)?.value;
     expect(updated.ok).toBe(true);
     expect(updated.value.elements[0].points[0]).toEqual({ x: 0, y: 6 });
-    // 属性面板按 id 建 key，拖动后切换对象再切回即可看到新坐标（面板草稿不随外部改动刷新，属已知取舍）
+    expect(screen.getByRole('textbox', { name: '起点 X（m）' })).toHaveValue('0');
+    expect(screen.getByRole('textbox', { name: '起点 Y（m）' })).toHaveValue('6');
+    // 拖动完成后直接修改截面，不能把节点重新写回拖动前的位置。
+    fireEvent.change(screen.getByRole('textbox', { name: '开挖深度（m）' }), { target: { value: '3' } });
+    const resized = dispatch.mock.results.at(-1)?.value;
+    expect(resized.ok).toBe(true);
+    expect(resized.value.elements[0].depth).toBe(3);
+    expect(resized.value.elements[0].points).toEqual([{ x: 0, y: 6 }, { x: 20, y: 0 }]);
   });
 
   it('M6 拖动阈值：小于 3 像素的移动不提交更新', () => {
@@ -690,6 +697,33 @@ describe('M7 工程量与测量界面', () => {
     fireEvent.click(screen.getByRole('button', { name: '删除当前基槽' }));
     expect(screen.getByText(/0 个开挖对象/)).toBeVisible();
     expect(screen.getByRole('region', { name: '工程量合计' })).toHaveTextContent('预计土方量合计 0.00 m³');
+  });
+
+  it('撤销重做同步属性输入，随后修改坡比不恢复已撤销的深度', () => {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    render(<App />);
+    drawTrench([[0, 0], [20, 0]]);
+    const depth = (): HTMLElement => screen.getByRole('textbox', { name: '开挖深度（m）' });
+    const summary = (): HTMLElement => screen.getByRole('region', { name: '工程量合计' });
+    expect(depth()).toHaveValue('2');
+    fireEvent.change(depth(), { target: { value: '3' } });
+    expect(depth()).toHaveValue('3');
+    expect(summary()).toHaveTextContent('预计土方量合计 210.00 m³');
+
+    fireEvent.click(screen.getByRole('button', { name: '撤销（Ctrl+Z）' }));
+    expect(depth()).toHaveValue('2');
+    expect(summary()).toHaveTextContent('预计土方量合计 120.00 m³');
+    fireEvent.click(screen.getByRole('button', { name: '重做（Ctrl+Y）' }));
+    expect(depth()).toHaveValue('3');
+    expect(summary()).toHaveTextContent('预计土方量合计 210.00 m³');
+
+    fireEvent.click(screen.getByRole('button', { name: '撤销（Ctrl+Z）' }));
+    fireEvent.change(screen.getByRole('textbox', { name: '放坡系数 m' }), { target: { value: '1' } });
+    const updated = dispatch.mock.results.at(-1)?.value;
+    expect(updated.ok).toBe(true);
+    expect(updated.value.elements[0]).toMatchObject({ depth: 2, slope: 1 });
+    expect(depth()).toHaveValue('2');
+    expect(summary()).toHaveTextContent('预计土方量合计 160.00 m³');
   });
 
   it('测量工具：两点得到距离，重新测量与 Esc 都不改变工程数据', () => {
