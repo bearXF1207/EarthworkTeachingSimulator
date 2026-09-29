@@ -779,6 +779,28 @@ describe('M7 工程量与测量界面', () => {
     expect(screen.getByText('已保存')).toBeVisible();
   });
 
+  it('保存后撤销并进行不同编辑仍显示未保存，离开与新建保留修改保护', async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('checkbox', { name: '显示网格' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+    await screen.findByText('已保存');
+    expect(gateway.save).toHaveBeenCalledTimes(1);
+
+    // 撤销后改动另一项设置：操作次数相同，内容与已保存的工程不同。
+    fireEvent.click(screen.getByRole('button', { name: '撤销（Ctrl+Z）' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: '吸附1m网格' }));
+    expect(screen.getByText('未保存')).toBeVisible();
+
+    const leaving = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(leaving);
+    expect(leaving.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: '新建' }));
+    expect(screen.getByRole('dialog', { name: '未保存的修改' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+    expect(screen.getByRole('checkbox', { name: '吸附1m网格' })).not.toBeChecked();
+    expect(screen.getByText('未保存')).toBeVisible();
+  });
+
   it('未保存时新建：取消保留工程，不保存才清空；保存失败不执行原动作', async () => {
     const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
     render(<App />);

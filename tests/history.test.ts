@@ -125,6 +125,50 @@ describe('M8 编辑历史与 dirty', () => {
     expect(store.isDirty()).toBe(false);
   });
 
+  it('保存后撤销并创建不同分支，即使历史步数相同也保持未保存', () => {
+    const store = new ProjectStore();
+    const original = pit('p1', 0);
+    expect(store.dispatch({ type: 'add', element: original }, prepare).ok).toBe(true);
+    const saved = store.snapshotText();
+    store.markSaved(saved);
+
+    expect(store.undo(prepare).ok).toBe(true);
+    expect(store.isDirty()).toBe(true);
+    expect(store.dispatch({ type: 'add', element: { ...original, depth: 5 } }, prepare).ok).toBe(true);
+    expect(store.canRedo).toBe(false);
+    expect(store.snapshotText()).not.toBe(saved);
+    expect(store.isDirty()).toBe(true);
+
+    // 新分支上的撤销/重做同样不能复用旧分支的保存状态。
+    expect(store.undo(prepare).ok).toBe(true);
+    expect(store.isDirty()).toBe(true);
+    expect(store.redo(prepare).ok).toBe(true);
+    expect(store.isDirty()).toBe(true);
+    store.markSaved(store.snapshotText());
+    expect(store.isDirty()).toBe(false);
+  });
+
+  it('新分支重新编辑回已保存内容时恢复干净，撤销离开该内容后仍未保存', () => {
+    const store = new ProjectStore();
+    const original = pit('p1', 0);
+    expect(store.dispatch({ type: 'add', element: original }, prepare).ok).toBe(true);
+    const saved = store.snapshotText();
+    store.markSaved(saved);
+
+    expect(store.undo(prepare).ok).toBe(true);
+    expect(store.dispatch({ type: 'add', element: { ...original, depth: 5 } }, prepare).ok).toBe(true);
+    expect(store.dispatch({ type: 'update', element: original }, prepare).ok).toBe(true);
+    expect(store.snapshotText()).toBe(saved);
+    expect(store.isDirty()).toBe(false);
+
+    expect(store.undo(prepare).ok).toBe(true);
+    expect(store.snapshotText()).not.toBe(saved);
+    expect(store.isDirty()).toBe(true);
+    expect(store.redo(prepare).ok).toBe(true);
+    expect(store.snapshotText()).toBe(saved);
+    expect(store.isDirty()).toBe(false);
+  });
+
   it('打开/新建是新会话：清空历史与基线；准备失败时历史栈不被破坏', () => {
     const store = new ProjectStore();
     store.dispatch({ type: 'add', element: trench('t1', [p(0, 0), p(20, 0)]) }, prepare);

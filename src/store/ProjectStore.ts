@@ -37,13 +37,11 @@ const noHistory = (message: string): Result<never> => ({ ok: false, issues: [{ c
 /**
  * 文档 store：唯一的项目状态入口。
  * 所有已提交动作经 `dispatch` 校验并原子交换渲染资源，同时记录最多 50 步撤销历史；
- * 保存基线由“revision + 稳定序列化文本”共同判定，撤销回已保存内容即恢复干净状态。
+ * 保存状态只比较稳定序列化内容，避免撤销后的新分支复用历史步数而误判已保存。
  */
 export class ProjectStore {
   private project = emptyProject();
   private readonly history = new CommandManager<Project>(HISTORY_LIMIT);
-  private revision = 0;
-  private savedRevision: number | null = 0;
   private savedText = serializeProject(emptyProject());
 
   getSnapshot(): Project { return structuredClone(this.project); }
@@ -52,9 +50,8 @@ export class ProjectStore {
   get undoDepth(): number { return this.history.undoDepth; }
   /** 稳定序列化的当前文档文本：保存与“确认已导出”比对同一份快照。 */
   snapshotText(): string { return serializeProject(this.project); }
-  /** 是否有未保存修改：先比 revision，再比内容，因此撤销回保存内容后即为干净。 */
+  /** 是否有未保存修改：只以实际保存内容为基线，恢复相同内容后即为干净。 */
   isDirty(): boolean {
-    if (this.savedRevision !== null && this.savedRevision === this.revision) return false;
     return this.snapshotText() !== this.savedText;
   }
 
@@ -93,12 +90,11 @@ export class ProjectStore {
     }
     const validated = validateProject(next);
     if (!validated.ok) return validated;
-    // 无变化的命令（重复设置同一开关、把参数改回原值）不占历史、不改 revision。
+    // 无变化的命令（重复设置同一开关、把参数改回原值）不占历史、不重建场景。
     if (serializeProject(validated.value) === serializeProject(previous)) return { ok: true, value: this.getSnapshot() };
     const applied = this.applyValidated(validated.value, prepare);
     if (!applied.ok) return applied;
     this.history.record(previous);
-    this.revision += 1;
     return applied;
   }
 
@@ -106,7 +102,7 @@ export class ProjectStore {
   redo(prepare: PrepareProject): Result<Project> { return this.step('redo', prepare); }
 
   /**
-   * 撤销/重做：先用目标状态完成校验与资源准备，成功后才移动历史栈与 revision，
+   * 撤销/重做：先用目标状态完成校验与资源准备，成功后才移动历史栈，
    * 因此准备失败不会破坏可撤销步骤，也不会出现“历史动了但画面没变”。
    */
   private step(direction: 'undo' | 'redo', prepare: PrepareProject): Result<Project> {
@@ -119,8 +115,6 @@ export class ProjectStore {
     if (!applied.ok) return applied;
     if (direction === 'undo') this.history.commitUndo(previous);
     else this.history.commitRedo(previous);
-    this.revision = Math.max(0, this.revision + (direction === 'undo' ? -1 : 1));
-    if (!this.isDirty()) this.savedRevision = this.revision; // 撤销回已保存内容 → 重新对齐基线
     return applied;
   }
 
@@ -134,8 +128,6 @@ export class ProjectStore {
     const applied = this.applyValidated(validated.value, prepare);
     if (!applied.ok) return applied;
     this.history.clear();
-    this.revision = 0;
-    this.savedRevision = 0;
     this.savedText = serializeProject(validated.value);
     return applied;
   }
@@ -149,6 +141,5 @@ export class ProjectStore {
    */
   markSaved(text: string): void {
     this.savedText = text;
-    this.savedRevision = this.snapshotText() === text ? this.revision : null;
   }
 }
