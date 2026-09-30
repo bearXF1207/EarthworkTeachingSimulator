@@ -1,174 +1,55 @@
 # 土方开挖教学模拟器
 
-用于理解平面布置、底部尺寸、开挖深度、放坡参数与三维形态/预计土方量之间的关系。目标是在 Windows 10/11 完全离线运行；最终通过 Electron 分发 Portable 应用。
+用于演示基坑、基槽的平面布置、开挖深度、放坡形态和预计土方量。支持三维查看、绘制与参数编辑、距离测量、工程保存及撤销重做。
 
-**当前完成 M10：在 M9 的界面之上交付 Electron 桌面与 Windows Portable——`electron/` 独立编译主进程/preload（CommonJS 产物 + 独立 tsconfig）；renderer 保持 `contextIsolation`/`sandbox` 开启、无 Node 集成，preload 只暴露 `open`/`saveAs`/`saveExisting` 与 `onRequestClose`/`confirmClose` 六个函数，invoke 通道白名单，沙箱下 preload 不 require 任何本地模块（源文本一致性测试守护）；文件读写全部由主进程完成：载荷先校验（内容 ≤8M 字符、安全基本名、绝对路径、无空字节），"写回"只允许本会话经打开/另存为确认过的授权路径；写入用同目录临时文件 + fsync + 重命名替换，失败清理临时文件并保留旧工程；窗口关闭被拦截后走"保存/不保存/取消"，受控标记防关闭循环，renderer 崩溃或未就绪直接放行；生产加载 `dist/index.html` 相对资源，禁新窗口/非预期导航/外部依赖。`npm run package` 产出免安装 Portable EXE 与 SHA-256 校验信息。实机验收：Electron 加载生产构建安全检查 8/8 通过，dev 双启动正常。当前 19 个测试文件 259 项测试，`npm run check` 全绿。Windows 10/11 干净断网环境的完整验收未执行（缺独立测试机），已知限制见 [M10 报告](docs/M10_REPORT.md)。**
+Windows x64 便携版无需安装，复制 EXE 后双击运行；已有工程需另带对应的 `.excavation` 文件。运行时无需 Node.js 或网络。计算结果用于教学演示，不作为专业工程计价或施工安全依据。
 
-## 快速开始
+## 开发
 
-开发环境：Node.js 24.15–24.x、npm 11；本机验证版本见 [M0 报告](docs/M0_REPORT.md)。`.node-version` 记录本次具体 Node 版本；如果所用版本管理器不识别该文件，请手动选择对应版本。
-
-在仓库根目录运行：
+需要 Node.js 24.15–24.x、npm 11；具体 Node.js 版本记录在 [.node-version](.node-version)。
 
 ```powershell
 npm ci
 npm run dev
 ```
 
-打开终端显示的本地地址（默认 `http://127.0.0.1:5173`）。如端口被占用，使用 `npm run dev -- --port 5174`。按 Ctrl+C 关闭。安装依赖通常需要网络，安装后运行应用不依赖外部服务。
+打开终端显示的本地地址。桌面开发模式：
 
-桌面（Electron）开发模式：`npm run build:electron` 后运行 `npm run dev:electron`，脚本先启动 vite 再用 `EARTHWORK_DEV_SERVER_URL` 指示 Electron 加载开发地址；退出 Electron 会同时结束 vite。
-
-不要双击 `dist/index.html` 验证网页构建；浏览器模块安全限制可能阻止 file 协议模块加载。网页构建用 `npm run preview`，本地桌面加载由 Electron 完成，Portable EXE 用 `npm run package` 生成。
-
-## 检查命令
-
-| 命令 | 作用 |
-| --- | --- |
-| `npm run dev` | 启动本地开发服务器 |
-| `npm run dev:electron` | Electron 开发模式：vite + 主进程双启动（需先 `npm run build:electron`） |
-| `npm run typecheck` | 检查应用、测试、Vite 配置与 Electron 主进程的 TypeScript 类型 |
-| `npm run lint` | ESLint；警告同样使命令失败 |
-| `npm test` | 单次运行单元/组件测试 |
-| `npm run test:watch` | 测试监听模式 |
-| `npm run build` | 类型检查后生成 `dist/` |
-| `npm run build:electron` | 编译 Electron 主进程/preload 到 `dist-electron/`（CommonJS） |
-| `npm run package` | build + build:electron 后用 electron-builder 产出 Portable EXE 与校验信息 |
-| `npm run preview` | 预览已经生成的构建 |
-| `npm run smoke` | 检查 dev/preview 的首页和本地资产；需先 build；自动关闭测试服务 |
-| `npm run check` | 依次 typecheck → lint → test → build → build:electron → smoke，失败立即停止 |
-
-依赖采用精确版本和 npm 锁文件。更换机器使用 `npm ci`；不要顺手升级 TypeScript 7，它超出当前 typescript-eslint 的支持范围。Node 低于24.15会因测试环境依赖要求被拒绝。
-
-## 文档与执行入口
-
-- [原始需求](PROJECT_SPEC.md)：保留用户原文（Markdown 版，取代早期的 `PROJECT_SPEC.txt`）。
-- [技术校核与详细设计](docs/TECHNICAL_DESIGN.md)：技术风险修正、数学推导、模块协议、数值边界、几何/交互/文件设计和官方依据。
-- [逐阶段实施手册](docs/MILESTONE_PLAYBOOK.md)：M0–M10 的顺序任务、文件/函数入口、具体验收用例、完成门槛和后续请求模板。
-- [M0 验证报告](docs/M0_REPORT.md)：本轮完成范围、工具版本、实际测试结果和已知限制。
-- [M1 验证报告](docs/M1_REPORT.md)：基础场景、16项测试及真实浏览器验收。
-- [M2 验证报告](docs/M2_REPORT.md)：三类基坑、41项回归测试、100次更新和实际浏览器验收。
-- [M3 验证报告](docs/M3_REPORT.md)：直线基槽几何/校验/开口、70项测试、真实浏览器端面与冲突验收。
-- [M4 验证报告](docs/M4_REPORT.md)：折线基槽 miter 转角与偏移校验、85项测试、真实浏览器 90°/45°/钝角与拒绝路径验收。
-- [M5 验证报告](docs/M5_REPORT.md)：俯视绘制与放置、吸附与精确输入、106项测试、真实浏览器鼠标/键盘验收。
-- [M6 验证报告](docs/M6_REPORT.md)：画布点选、选中高亮与拖动编辑（阈值 3px、拖动中只出预览、松手提交一次）。
-- [M7 验证报告](docs/M7_REPORT.md)：解析土方量、工程量读数、两点距离测量与网格几何交叉验证。
-- [M8 验证报告](docs/M8_REPORT.md)：项目文件格式与严格校验、打开/保存/另存为、dirty 基线与离开提醒、50 步撤销重做。
-- [M9 验证报告](docs/M9_REPORT.md)：三列工作区、工具面板与状态栏、输入范围提示与 aria-invalid、禁用原因、响应式与聚焦样式。
-- [M10 验证报告](docs/M10_REPORT.md)：Electron 主进程与受限 preload、原生文件读写与授权路径、可恢复写入、关闭三选项、Portable EXE 与安全边界实机验收。
-- [沟槽连接修复报告](docs/JUNCTION_FIX_REPORT.md)：双向贯通、补挖量、边界条件与旧诊断勘误。
-- [仓库铁律](AGENTS.md)：改动需要相关测试和 Git commit。
-
-### M10 操作
-
-- 桌面运行：`npm run dev:electron`（开发，加载 vite）或直接运行 `release/` 中的 Portable EXE（生产，加载本地 `dist/`，无需 Node.js/服务器/网络）。
-- 文件：`打开…`/`另存为…` 走原生对话框，主进程读写；`保存`写回原路径；会话内只允许写回经打开/另存为确认过的授权路径。写入先用同目录临时文件再原子替换，失败时保留旧文件并提示原因；`.excavation` 格式与校验规则和浏览器版完全一致。
-- 关闭：有未保存修改时关窗会弹出`保存/不保存/取消`；保存成功才真正关闭，失败或取消都保留窗口。renderer 崩溃或未加载完成时直接放行，不会卡死关闭流程。
-- 安全边界：renderer 无 `require`/`process`/`ipcRenderer`，preload 只暴露六个函数（`open`/`saveAs`/`saveExisting`/`onRequestClose`/`confirmClose` 及卸载订阅），非白名单通道不可触达；禁新窗口、非预期导航与 webview；应用图标、字体、Three.js 全部随包分发，无运行时外部依赖。
-- 发行包：`npm run package` 产出 `release/EarthworkTeachingSimulator-<版本>-x64-portable.exe`（免安装、单文件）与`校验信息.txt`（版本、SHA-256、用法）；EXE 未做代码签名，首次运行可能触发 SmartScreen 提示。
-
-### M9 操作
-
-- 布局：顶部文档栏横跨整行；左侧`施工工具`（选择 / 绘制基槽 / 放置基坑 / 测量，以及删除当前对象）；中间三维场地；右侧`绘制与参数`与属性、工程量；底部横排视角与显示控制 + 状态栏。
-- 状态栏：始终以文字显示当前工具、俯视光标的地面坐标（取整到厘米，指针离开画布显示 `—`）、网格与吸附开关、当前工具的操作提示、开挖对象数量与保存状态（`已保存` / `未保存` / `正在保存或打开…`），不依赖颜色表达。草稿的实时读数与吸附来源仍只在参数面板显示，不在两处重复。
-- 不可用操作一律禁用并在 `title` 与面板说明里写出原因：未选中对象时的删除入口、绘制与放置期间被锁定的视角、还没有开挖对象时的显示模式、保存/打开等待期间的全部编辑与文件操作、撤销/重做在历史为空时。
-- 输入校验：属性与草稿参数输入框带 `min`/`max` 和`取值范围 …～…`提示；被拒绝时输入框加 `aria-invalid` 并同时给出中文文字原因，模型保持上一有效值，不新增第二套业务校验。
-- 响应式与可访问性：宽屏为 `150px / 1fr / 320px` 三列工作区；视口 ≤1180px 时工具面板转为横排工具栏、场地与参数并排；≤800px 时全部单列堆叠，三种宽度都不产生横向滚动。所有操作都是原生 `button`/`input`/`select`，可用 Tab 聚焦并有 `:focus-visible` 聚焦环；输入法组合（`isComposing`）中的按键不触发场景命令。
-- 已知取舍：未实现四视角之间的过渡动画（手册列为可选；动画会干扰测试中的投影正确性与画布拾取）；窄屏下中间场地与右侧参数会纵向堆叠，需要滚动查看。
-
-### M8 操作
-
-- 文档栏：`新建`、`打开…`、`保存`、`另存为…`、`撤销（Ctrl+Z）`、`重做（Ctrl+Y）`，右侧徽标显示"已保存/未保存"。工程数据只存在内存中，浏览器刷新会清空。
-- 文件格式：`.excavation`（JSON，`version=1`，含 name/units/elements/settings）。打开时先校验形状、版本与 units，再逐字段白名单重建并做完整工程校验；**打开失败保留当前工程**（未来版本、未知类型、重复 id、超限、自交与重叠都会被拒绝并给出原因）。
-- 保存能力：支持 File System Access 的浏览器可写回原文件并复用目的地；否则"保存/另存为"只是请求下载副本，返回 `export-requested` —— 此时徽标保持"未保存"，需在文档栏点`确认已导出`才把该快照标记为已保存。保存失败或取消都不会清 dirty，也不会继续新建/打开。
-- 未保存确认：有未保存修改时`新建`/`打开…`会弹出"保存并继续 / 不保存并继续 / 取消"；选择保存时必须真实写入成功（或随后确认已导出）才继续。关闭标签页只用浏览器原生提醒。
-- 撤销/重做：最多 50 步已提交动作（创建、参数修改、移动、删除、网格/吸附开关）；无变化命令不入历史，撤销后的新编辑清空重做分支；撤销回已保存内容时徽标回到"已保存"。输入框内 `Ctrl+Z` 仍是文本撤销。
-
-### M7 操作
-
-- 工程量：属性面板显示对象的**单槽设计估算**；侧栏"工程量合计"将单槽估算与"连接补充开挖"相加。连接修正来自显示同源的合并几何，不重复计入已有开挖；草稿与测量不计入。不同深度的接头在共同深度内贯通，更深处保留台阶，并非漏面。
-- 结果口径：按设计几何解析计算并标记"预计土方量"，用于教学演示；折线转角不单独累加或扣减边坡重叠，不是工程计价、放坡安全建议或松方/压实方换算。
-- 测量：点`测量`后在俯视场地单击设第一点、再单击设第二点；画布显示连线与跟随当前点的距离标签，面板同步显示距离。再点一次即从该点重新测量，`重新测量`按钮或 `Esc` 取消；测量结果不进入工程数据、历史或文件。
-
-### M6 操作
-
-在俯视图用鼠标**点击开挖实体**即可选中（实体与中心线同时高亮）；选中后：
-
-- 把光标放到基槽节点 2m 内按下并拖动 → 拖动中只显示改后的预览线，**松手提交一次**更新；移动不足 3 像素不算拖动（不会误触发，也不会影响相机旋转/平移）。
-- 选中基坑后拖动 → 预览为改后的槽顶轮廓环，松手提交一次位置更新。
-- 拖动时仍按相邻基槽中心线吸附，网格兜底沿用吸附设置；拖动结果与属性面板编辑走同一条校验链路，非法结果保留原数据并提示原因。
-
-### M5 操作
-
-工具在左侧`施工工具`面板：`选择`（画布点选与拖动编辑）、`绘制基槽`、`放置基坑`、`测量`（地面两点距离，结果不入工程数据）。
-
-- 绘制基槽：进入后自动切到俯视并锁定视角；在场地单击依次设置节点，面板实时显示每段长度、方位角、光标段读数与**当前点坐标**；`双击`终点、`Enter`、`Ctrl/Cmd+Enter` 或“完成基槽”按钮确认，`Esc`取消。也可以在“本段长度/方位角”中输入后按“添加下一点”，按绝对方位角推算下一点（轴上方向得到精确坐标，输入结果不吸附，长度不会被改写）。
-- 快捷键分工：焦点不在输入框时 `Enter` 完成整槽；焦点在长度/角度输入框时 `Enter` 只提交本段，`Ctrl/Cmd+Enter` 在任何焦点下都完成整槽。确认失败时原因显示在绘制面板顶部。
-- 环形基槽（中心线首尾闭合）：把最后一个节点吸附回**起点**（面板提示“吸附到起点：首尾闭合”）即围合成环形，面板显示“已首尾闭合”，确认后生成一条环形基槽——外圈是开挖开口、内圈包围的岛保持原地面。每个节点都按 miter 转角（不再有端面）；坡比大于 0 时顶环比底环宽，底部为环形面 + 外圈与内圈两圈侧面，转角 miter 比上限仍为 4。数据上末点等于首点即表示闭合，属性面板编辑末点会重新变成开口折线。
-- 岛内可继续开槽：环形基槽的岛仍属地面，允许在岛内继续绘制基槽；从岛内朝环形槽方向画时按**内圈边界**自动收边，开口与环形槽内壁共边连通（岛内的地面会按新槽挖掉，形成真正的开口）。只有整条中心线都压在相邻槽带（外圈与内圈之间）里，才判定为重复开挖并拒绝。
-- 贯通处的接口处理：端面落在相邻开口边界的**贴合带**内时，由 `trenchNetwork` 生成派生连接开挖并裁掉内部墙面，接口处不会留墙、槽底连续；深浅槽只在共同深度内贯通。注意"顶口相接"本身不等于槽底连通：早期"只删端面"的做法已被双向有限射线回归推翻（见 [连接修复报告](docs/JUNCTION_FIX_REPORT.md)），现由 `tests/junction.test.ts` 的多档深度射线、土楔量化与连接补挖量共同校验。
-- 相邻基槽吸附（吸附到中心）：中心线优先吸附到相邻基槽的**中心线**——鼠标落在对方槽带（半径 1.5m + 对方槽顶半宽）内就命中它的中心线，端点附近再优先吸附**端点**（端点对接）。只有超出槽带范围才吸附**贴合线**（把对方槽顶边界外移新槽顶半宽），用于平行并排且只共边。面板显示当前吸附来源。
-- 自动收边（多条基槽相互贯通）：从相邻基槽中心线起画（或画到对方中心线）时，确认后按对方槽顶边界把该端自动收边，开口只共边接触，两条基槽因此连成一条连续开挖而不交叠；收边让出 10nm 级缝隙以稳定地面三角化。整条中心线都落在相邻槽内时会被拒绝并提示。端点对接、共边贴合等贴合方式不受影响。
-- 中心线显示：已建基槽的中心线在 2D/3D 视图下都保持可见（略高于地面 2cm），选中“当前对象”时用高亮色显示；环形基槽的中心线是闭合环。
-- 正交模式：绘制面板中的开关，打开后鼠标绘制只能得到水平或竖直段（按位移较大的分量取方向，相等取水平）；长度/角度输入仍按输入值执行。
-- 放置基坑：选择方形/矩形/圆形与尺寸、深度、坡比、旋转角，在场地单击放置；预览显示槽顶轮廓，非法位置会被拒绝并保持工具。
-- 吸附：`吸附1m网格`默认开启，鼠标落点与基坑中心取最近整米格点；关闭后使用原始投影坐标。网格显隐与吸附相互独立。
-- 快捷键只在非文本输入焦点生效：输入框内 `Enter` 只提交输入段，`Esc` 不取消草稿；离开输入框后 `Enter` 完成、`Esc` 取消。
-- `当前对象`与属性面板用于修改已创建对象：先选对象，再编辑坐标/尺寸/深度/坡比，非法值拒绝并保留上一有效状态；删除后地面回填。
-
-基坑与其他开口仍是重叠、包含或相切都拒绝；基槽之间允许边界接触（共边、共点、端面贴合）但内部交叠拒绝。折返、自交、断面对角超过 miter 上限等几何问题都会给出中文原因，失败时保留可继续修改的草稿或上一有效模型。
-
-“重新加载场景”仅重建图形资源并保留当前工程；浏览器刷新会清空内存工程。M8 才提供保存/打开和撤销历史。
-
-## 目录
-
-```text
-src/
-  main.tsx                 React 挂载入口
-  app/                     App.tsx 应用组装、ErrorBoundary 渲染兜底、styles.css 样式
-  components/
-    SceneViewport.tsx      画布宿主与工作区组装：投影/吸附/绘制/点选/拖动的交互入口
-    DrawingPanel/          草稿读数、精确输入、失败提示与草稿参数（工具按钮已移至 ToolPanel）
-    PropertyPanel/         按类型编辑已建对象（NumberFields/TrenchEditor/PitEditor/QuantityView）
-    ToolPanel/             M9 左侧施工工具：工具切换、删除当前对象、toolLabels 文案常量
-    StatusBar/             M9 状态栏：工具、坐标、网格/吸附、操作提示、对象数与保存状态
-    ViewControls/          视角、显示模式、网格与吸附开关
-    TopBar/                DocumentBar：新建/打开/保存/另存为、撤销/重做与保存状态
-    dialogs/               UnsavedDialog：未保存时的保存/不保存/取消确认
-  core/
-    model/                 Project / 元素 / Point2 类型与默认值
-    geometry/              offset、join、坑槽几何、吸附目标、收边（trenchTrim）、
-                           派生连接与凸单元并集（trenchNetwork / convexExcavation）
-    validation/            数值、折线、多边形、工程校验与开口冲突
-    calculation/           测量、基槽与基坑体积、工程量汇总（M7 纯函数）
-    commands/              CommandManager：最多 50 步撤销/重做栈
-    io/                    projectSchema（.excavation 序列化/严格解析）、fileGateway（文件服务合同与浏览器适配）、
-                           desktopFileService（同一合同的 Electron 适配与宿主检测工厂）、desktopWindow（关闭请求订阅）
-  scene/                   SceneManager（唯一持有 Three 对象）、CameraManager、
-                           GroundManager（带孔地面与岛补片）、groundTriangulation（三角化与接触轮廓回退）、
-                           MeshFactory、PreviewLine、DrawingManager（绘制状态机）、
-                           groundPointer、runtimeInfo
-  store/                   ProjectStore：校验 + 准备 + 原子提交（收边、历史、dirty 基线、原子加载）
-tests/                     Vitest 测试（含 scene-test-kit 假渲染器）与 DOM 初始化
-scripts/smoke.mjs          实际启动开发/预览服务器的 HTTP 验证
-                           dev-electron.mjs（vite+Electron 双启动）、make-icon.mjs（生成应用图标）、
-                           finish-electron-build.mjs（CJS 标记）、release-info.mjs（EXE 校验信息）
-docs/                      校核、实施手册与 M0–M10 阶段报告
-electron/                  M10 Electron 主进程：main.ts（窗口/导航拦截/关闭流程）、preload.ts（受限桥）、
-                           fileService.ts（载荷校验/授权路径/原子写入）、fileIpc.ts（IPC 装配）、独立 tsconfig
-build/                     应用图标（icon.ico，由 scripts/make-icon.mjs 生成）
+```powershell
+npm run build:electron
+npm run dev:electron
 ```
 
-只有仍为空的占位目录用 `.gitkeep` 纳入版本控制；已有真实文件的目录不再保留 `.gitkeep`。业务数据和数学计算不依赖 React/Three；复杂几何不放入组件；SceneManager 从 M1 统一拥有 Three 对象与资源生命周期。
+## 验证与打包
 
-## 当前技术决策
+```powershell
+npm run check
+npm run package
+```
 
-保留原技术栈。坐标为 XY 地面、Z 向上；折线槽按 miter 构造，地面采用二维开孔，环槽保留内岛。原工程数据仍禁止内部交叠，但基槽完整贴合的端部现在通过**派生凸单元并集**实现实际贯通，不再仅删除端面；地面顶口和存储中心线不扩大，补挖发生在既有开口之下。没有引入通用 CSG 依赖。单对象解析计算保持不变，连接补挖量使用双精度合并面片积分。范围与后续维护约束见连接修复报告。
+`check` 包含类型检查、ESLint、测试、网页与桌面构建，以及本地服务冒烟验证。修改代码需更新相关测试，通过验证后创建 Git commit。
 
-M8 起文档状态由 `ProjectStore` 统一管理：所有已提交动作经同一命令入口，历史最多 50 步；保存基线用 `revision + 稳定序列化文本` 判定，撤销回保存内容即干净；文件写入区分 `saved / cancelled / export-requested`，下载回退必须由用户"确认已导出"才更新基线。文件格式固定为 `.excavation` version 1，拒绝缺失/未来版本与未知类型，不猜测未来格式。
+Windows 打包结果位于 `release/`：
 
-M9 把界面与教学体验独立于几何与数据：工具名称与操作提示集中在 `components/ToolPanel/toolLabels.ts`，状态栏与工具按钮共用同一份文案；状态栏只读取已有界面状态、不触发任何命令，也不用颜色表达状态。工作区用 CSS Grid 三列布局，`minmax(0, 1fr)` 保证中间场地可以收缩，因此各宽度都没有横向滚动；断点只改变排列方式，不改变任何交互或数据行为。属性输入的 `min`/`max` 只作界面提示与浏览器辅助，数值是否接受仍由 `core/validation` 决定，避免出现第二套业务校验。
+- `EarthworkTeachingSimulator-<版本>-x64-portable.exe`：免安装应用。
+- `校验信息.txt`：构建信息和 SHA-256 校验值。
 
-M10 用 Electron 承载同一前端：主进程/preload 在 `electron/` 独立编译（CommonJS，独立 tsconfig），renderer 侧以 `core/io/desktopFileService.ts` 实现同一个 `FileGateway` 合同——业务核心不感知宿主是浏览器还是 Electron，浏览器适配器仅用于开发。安全模型：`contextIsolation`+`sandbox` 开启、无 Node 集成；主进程持有一个会话级授权路径注册表，"保存"只能写回本会话确认过的文件；原子写入（临时文件 + fsync + 重命名）保证失败不损坏旧工程；关闭流程用 `closeConfirmed` 与 renderer 存活标记防循环。`npm run check` 包含主进程类型检查与 CJS 产物构建。
+若下载 Electron 运行时超时，可使用已安装的同版本本地运行时打包：
 
-运行时使用系统字体及本地依赖，没有在线字体/贴图/CDN。M1–M9 已做真实浏览器 WebGL 与鼠标/键盘验收；M10 已做 Electron 实机安全边界与 dev 双启动验收。当前测试不证明 Windows 10/11 干净断网环境的完整验收（未执行，缺独立测试机）、专业工程量或放坡安全性。构建仍有 Three 主包超过500kB的非阻塞体积提醒，未通过提高阈值隐藏。
+```powershell
+npm run build
+npm run build:electron
+node node_modules/electron-builder/cli.js --win portable --config.electronDist=node_modules/electron/dist
+node scripts/release-info.mjs
+```
+
+## 仓库内容
+
+- [src/](src/)：React 界面、Three.js 场景、几何计算与工程数据。
+- [electron/](electron/)：桌面窗口、文件读写和 preload 桥接。
+- [tests/](tests/)：单元、组件与桌面服务回归测试。
+- [scripts/](scripts/)：开发启动、构建收尾、冒烟验证和发行校验脚本。
+- [build/icon.ico](build/icon.ico)：打包所需的应用图标。
+- 根目录配置与依赖锁文件：用于复现开发、测试和打包环境。
+
+开发过程文档保留在本地，不纳入仓库；依赖、缓存及构建产物同样不提交。可执行文件适合通过 GitHub Releases 分发。

@@ -14,3 +14,10 @@ coverage/
 Thumbs.db
 test-results/
 playwright-report/
+
+# 本地开发过程资料，不属于最小源码发行集合
+/AGENTS.md
+/PROJECT_SPEC.md
+/docs/
+/electron/README.md
+/scripts/make-icon.mjs
