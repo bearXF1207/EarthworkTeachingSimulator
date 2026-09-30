@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 
 /**
  * M10 开发模式双启动：先确认主进程/preload 已编译，再启动 vite dev server，
@@ -30,7 +31,7 @@ const devUrl = await new Promise((resolve, reject) => {
   vite.stdout.on('data', chunk => {
     process.stdout.write(chunk);
     // vite 输出带 ANSI 颜色码（Local: 与 URL 之间夹着转义序列），先剥离再匹配。
-    const text = String(chunk).replace(/\u001B\[[0-9;]*m/g, '');
+    const text = stripVTControlCharacters(String(chunk));
     const match = /Local:\s+(http:\/\/127\.0\.0\.1:\d+\/)/.exec(text);
     if (match) { clearTimeout(timer); resolve(match[1]); }
   });
