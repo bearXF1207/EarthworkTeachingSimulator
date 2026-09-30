@@ -11,7 +11,7 @@ export function App(): ReactElement {
           <p className="eyebrow">EARTHWORK · 教学实验室</p>
           <h1>土方开挖教学模拟器</h1>
         </div>
-        <span className="phase-badge">M9 · 界面与教学体验</span>
+        <span className="phase-badge">开发者：熊峰</span>
       </header>
 
       <main className="workspace">

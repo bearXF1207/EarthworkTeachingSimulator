@@ -1119,6 +1119,19 @@ describe('M7 工程量与测量界面', () => {
 });
 
 describe('M9 界面与教学体验', () => {
+  it('显示开发者署名，文件与历史按钮共用工具栏，参数栏可获得键盘焦点', () => {
+    render(<App />);
+    expect(screen.getByText('开发者：熊峰')).toBeVisible();
+    expect(screen.queryByText('M9 · 界面与教学体验')).not.toBeInTheDocument();
+    const toolbar = screen.getByRole('group', { name: '工程工具栏' });
+    expect(within(toolbar).getAllByRole('button')).toHaveLength(6);
+    expect(within(toolbar).getByRole('group', { name: '文件操作' })).toBeVisible();
+    expect(within(toolbar).getByRole('group', { name: '编辑历史' })).toBeVisible();
+    const parameters = screen.getByRole('complementary', { name: '绘制与开挖对象属性' });
+    parameters.focus();
+    expect(parameters).toHaveFocus();
+  });
+
   it('状态栏显示工具、网格、吸附、对象数与保存状态，俯视时跟随光标坐标', () => {
     render(<App />);
     const status = screen.getByRole('group', { name: '状态栏' });

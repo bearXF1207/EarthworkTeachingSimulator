@@ -635,7 +635,7 @@ export function SceneViewport(): ReactElement {
         : '左键或右键平移 · 滚轮缩放 · 正交视图锁定旋转'}<br />网格间距 1m · 坐标轴：X 红 / Y 绿 / Z 蓝</span>
       <button onClick={reload}>重新加载场景</button></div>
     </section>
-    <aside className="next-stage" aria-label="绘制与开挖对象属性">
+    <aside className="next-stage" aria-label="绘制与开挖对象属性" tabIndex={0}>
     <h2>绘制与参数</h2>
     <DrawingPanel state={draw} ready={status.ready} message={drawMessage} section={section} pit={pit}
       ortho={ortho} onOrtho={setOrtho} hint={snapHint}

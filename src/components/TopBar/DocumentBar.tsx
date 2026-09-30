@@ -30,19 +30,21 @@ export function DocumentBar({
   onNew, onOpen, onSave, onSaveAs, onConfirmExport, onUndo, onRedo,
 }: Props): ReactElement {
   return <section className="document-bar" aria-label="工程文件">
-    <p className="document-name">
-      <strong>{name}</strong>
-      <span className={dirty ? 'dirty-badge' : 'clean-badge'}>{dirty ? '未保存' : '已保存'}</span>
-    </p>
-    <div className="document-actions" role="group" aria-label="文件操作">
-      <button disabled={busy} title={busy ? busyReason : '新建一个空工程（未保存时会先询问）'} onClick={onNew}>新建</button>
-      <button disabled={busy} title={busy ? busyReason : '打开本地 .excavation 工程文件'} onClick={onOpen}>打开…</button>
-      <button disabled={busy} title={busy ? busyReason : '保存到原文件；无写入权限时改用下载副本'} onClick={onSave}>保存</button>
-      <button disabled={busy} title={busy ? busyReason : '选择新位置保存一份副本'} onClick={onSaveAs}>另存为…</button>
-    </div>
-    <div className="document-actions" role="group" aria-label="编辑历史">
-      <button disabled={busy || !canUndo} title={busy ? busyReason : canUndo ? '撤销上一步编辑（Ctrl+Z）' : '没有可撤销的编辑'} onClick={onUndo}>撤销（Ctrl+Z）</button>
-      <button disabled={busy || !canRedo} title={busy ? busyReason : canRedo ? '重做被撤销的编辑（Ctrl+Y）' : '没有可重做的编辑'} onClick={onRedo}>重做（Ctrl+Y）</button>
+    <div className="document-toolbar" role="group" aria-label="工程工具栏">
+      <p className="document-name">
+        <strong>{name}</strong>
+        <span className={dirty ? 'dirty-badge' : 'clean-badge'}>{dirty ? '未保存' : '已保存'}</span>
+      </p>
+      <div className="document-actions" role="group" aria-label="文件操作">
+        <button disabled={busy} title={busy ? busyReason : '新建一个空工程（未保存时会先询问）'} onClick={onNew}>新建</button>
+        <button disabled={busy} title={busy ? busyReason : '打开本地 .excavation 工程文件'} onClick={onOpen}>打开…</button>
+        <button disabled={busy} title={busy ? busyReason : '保存到原文件；无写入权限时改用下载副本'} onClick={onSave}>保存</button>
+        <button disabled={busy} title={busy ? busyReason : '选择新位置保存一份副本'} onClick={onSaveAs}>另存为…</button>
+      </div>
+      <div className="document-actions" role="group" aria-label="编辑历史">
+        <button disabled={busy || !canUndo} title={busy ? busyReason : canUndo ? '撤销上一步编辑（Ctrl+Z）' : '没有可撤销的编辑'} onClick={onUndo}>撤销（Ctrl+Z）</button>
+        <button disabled={busy || !canRedo} title={busy ? busyReason : canRedo ? '重做被撤销的编辑（Ctrl+Y）' : '没有可重做的编辑'} onClick={onRedo}>重做（Ctrl+Y）</button>
+      </div>
     </div>
     {pendingExportName !== null && <div className="export-confirm" role="status">
       <p>已请求导出 {pendingExportName}；浏览器无法确认是否写入成功，请确认文件已保存后再继续。</p>
