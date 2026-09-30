@@ -7,7 +7,7 @@ import { FakeRenderer, FakeResizeObserver } from './scene-test-kit';
 import { SceneManager } from '../src/scene/SceneManager';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type * as Three from 'three';
-import { BufferGeometry, Material, ShapeUtils } from 'three';
+import { BufferGeometry, Material, ShapeUtils, Vector3 } from 'three';
 import { GroundManager } from '../src/scene/GroundManager';
 import { ProjectStore } from '../src/store/ProjectStore';
 import { serializeProject } from '../src/core/io/projectSchema';
@@ -50,6 +50,19 @@ const canvasElement = (): Element => {
   return canvas;
 };
 const clickGround = (x: number, y: number, detail = 1): void => { fireEvent.click(canvasElement(), { ...groundClient(x, y), detail }); };
+/** 保留真实鼠标指针字段，使同一事件同时经过 React 和真实 OrbitControls。 */
+function mousePointer(
+  type: 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel' | 'lostpointercapture',
+  point: { clientX: number; clientY: number }, button = 0, pointerId = 1,
+): void {
+  const released = type === 'pointerup' || type === 'pointercancel' || type === 'lostpointercapture';
+  const event = new MouseEvent(type, { ...point, bubbles: true, cancelable: true,
+    button: type === 'pointermove' ? -1 : button, buttons: released ? 0 : button === 2 ? 2 : 1 });
+  Object.defineProperties(event, {
+    pointerId: { value: pointerId }, pointerType: { value: 'mouse' }, isPrimary: { value: true },
+  });
+  fireEvent(canvasElement(), event);
+}
 /** 走完整绘制流程：切换工具、逐点单击、Enter 完成。 */
 const drawTrench = (points: [number, number][]): void => {
   fireEvent.click(screen.getByRole('button', { name: '绘制基槽' }));
@@ -357,7 +370,9 @@ describe('M5 俯视绘制与放置', () => {
     // jsdom 未实现指针捕获，OrbitControls 会直接调用，这里补上替身。
     Object.defineProperty(canvasElement(), 'setPointerCapture', { value: () => undefined });
     Object.defineProperty(canvasElement(), 'releasePointerCapture', { value: () => undefined });
-    fireEvent.pointerDown(canvasElement(), groundClient(0, 0));
+    mousePointer('pointerdown', groundClient(0, 0));
+    mousePointer('pointermove', groundClient(30, 0));
+    mousePointer('pointerup', groundClient(30, 0));
     fireEvent.click(canvasElement(), groundClient(30, 0));
     fireEvent.click(document.body, groundClient(40, 0));
     expect(screen.getByText(/已设置 0 个节点/)).toBeVisible();
@@ -595,9 +610,9 @@ describe('M5 俯视绘制与放置', () => {
     dispatch.mockClear();
     // 选中状态下拖动第一个节点 (0,0) → (0,6)
     const start = groundClient(0, 0), end = groundClient(0, 6);
-    fireEvent.pointerDown(canvasElement(), start);
-    fireEvent.pointerMove(canvasElement(), end);
-    fireEvent.pointerUp(canvasElement(), end);
+    mousePointer('pointerdown', start);
+    mousePointer('pointermove', end);
+    mousePointer('pointerup', end);
     const calls = dispatch.mock.calls.filter(([command]) => command.type === 'update');
     expect(calls).toHaveLength(1); // 拖动全程只提交一次
     const updated = dispatch.mock.results.at(-1)?.value;
@@ -620,9 +635,9 @@ describe('M5 俯视绘制与放置', () => {
     fireEvent.click(screen.getByRole('button', { name: '俯视' }));
     dispatch.mockClear();
     const start = groundClient(0, 0);
-    fireEvent.pointerDown(canvasElement(), start);
-    fireEvent.pointerMove(canvasElement(), { clientX: start.clientX + 1, clientY: start.clientY + 1 });
-    fireEvent.pointerUp(canvasElement(), start);
+    mousePointer('pointerdown', start);
+    mousePointer('pointermove', { clientX: start.clientX + 1, clientY: start.clientY + 1 });
+    mousePointer('pointerup', start);
     expect(dispatch.mock.calls.filter(([command]) => command.type === 'update')).toHaveLength(0);
   });
 
@@ -643,6 +658,160 @@ describe('M5 俯视绘制与放置', () => {
     expect(screen.getByText(/3 个开挖对象/)).toBeVisible();
     expect(dispatch.mock.results.at(-1)?.value.value.elements.map((e: { type: string }) => e.type))
       .toEqual(['square-pit', 'rect-pit', 'circular-pit']);
+  });
+});
+
+describe('M6 对象拖动与相机平移互斥', () => {
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(500);
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(800);
+  });
+
+  function selectedPit() {
+    const dispatch = vi.spyOn(ProjectStore.prototype, 'dispatch');
+    const prepare = vi.spyOn(SceneManager.prototype, 'prepareProject');
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: '放置基坑' }));
+    clickGround(0, 0);
+    fireEvent.click(screen.getByRole('button', { name: '选择' }));
+    fireEvent.click(screen.getByRole('button', { name: '俯视' }));
+    const store = dispatch.mock.contexts[0];
+    const scene = prepare.mock.contexts.at(-1);
+    if (!(store instanceof ProjectStore) || !(scene instanceof SceneManager)) throw new Error('missing store or scene');
+    // jsdom 不实现原生指针捕获，仅在当前 canvas 上记录捕获状态。
+    const captured = new Set<number>();
+    const capture = vi.spyOn(scene.domElement, 'setPointerCapture').mockImplementation(id => { captured.add(id); });
+    const release = vi.spyOn(scene.domElement, 'releasePointerCapture').mockImplementation(id => { captured.delete(id); });
+    vi.spyOn(scene.domElement, 'hasPointerCapture').mockImplementation(id => captured.has(id));
+    dispatch.mockClear();
+    return { dispatch, store, scene, captured, capture, release };
+  }
+
+  it.each([
+    { label: '右键拖动空白', button: 2, x: 30 },
+    { label: '右键拖动坑面', button: 2, x: 0 },
+    { label: '左键拖动空白', button: 0, x: 30 },
+  ])('$label 只平移相机，不修改已选基坑', ({ button, x }) => {
+    const { dispatch, store, scene } = selectedPit();
+    const before = store.getSnapshot();
+    const camera = scene.cameras.active.position.clone();
+    mousePointer('pointerdown', groundClient(x, 0), button);
+    mousePointer('pointermove', groundClient(x + 10, 6), button);
+    mousePointer('pointerup', groundClient(x + 10, 6), button);
+    expect(dispatch.mock.calls.filter(([command]) => command.type === 'update')).toHaveLength(0);
+    expect(store.getSnapshot()).toEqual(before);
+    expect(scene.cameras.active.position.distanceTo(camera)).toBeGreaterThan(.1);
+  });
+
+  it('左键命中基坑只在松手时提交一次位置更新，相机保持不动', () => {
+    const { dispatch, store, scene, captured, capture, release } = selectedPit();
+    const before = store.getSnapshot();
+    const camera = scene.cameras.active.position.clone();
+    mousePointer('pointerdown', groundClient(0, 0));
+    expect(capture).toHaveBeenCalledExactlyOnceWith(1);
+    expect(captured.has(1)).toBe(true);
+    mousePointer('pointermove', groundClient(5, 3));
+    mousePointer('pointermove', groundClient(10, 6));
+    const animate = FakeRenderer.instances.at(-1)!.setAnimationLoop.mock.calls.at(-1)?.[0];
+    expect(animate).toBeTypeOf('function');
+    if (animate) act(() => { Reflect.apply(animate, undefined, [0]); });
+    expect(store.getSnapshot()).toEqual(before);
+    expect(dispatch.mock.calls).toHaveLength(0);
+    expect(scene.preview.line.visible).toBe(true);
+    expect(scene.cameras.active.position.distanceTo(camera)).toBeLessThan(1e-9);
+    mousePointer('pointerup', groundClient(10, 6));
+    expect(dispatch.mock.calls.filter(([command]) => command.type === 'update')).toHaveLength(1);
+    expect(store.getSnapshot().elements[0]).toMatchObject({ position: { x: 10, y: 6 } });
+    expect(scene.cameras.active.position.distanceTo(camera)).toBeLessThan(1e-9);
+    expect(scene.preview.line.visible).toBe(false);
+    expect(release).toHaveBeenCalledExactlyOnceWith(1);
+    expect(captured.size).toBe(0);
+  });
+
+  it('平移惯性未结束时开始拖动，编辑期间及结束后镜头都不漂移', () => {
+    const { dispatch, store, scene } = selectedPit();
+    const animate = FakeRenderer.instances.at(-1)!.setAnimationLoop.mock.calls.at(-1)?.[0];
+    expect(animate).toBeTypeOf('function');
+    const frame = (): void => { if (animate) act(() => { Reflect.apply(animate, undefined, [0]); }); };
+    const client = (x: number, y: number) => {
+      scene.cameras.active.updateMatrixWorld();
+      const ndc = new Vector3(x, y, 0).project(scene.cameras.active);
+      return { clientX: (ndc.x + 1) * 400, clientY: (1 - ndc.y) * 250 };
+    };
+    mousePointer('pointerdown', groundClient(30, 0), 2);
+    mousePointer('pointermove', groundClient(40, 6), 2);
+    mousePointer('pointerup', groundClient(40, 6), 2);
+    const beforeFrame = scene.cameras.active.position.clone();
+    frame();
+    // 确认测试开始时确有未消耗完的相机惯性。
+    expect(scene.cameras.active.position.distanceTo(beforeFrame)).toBeGreaterThan(.1);
+    const camera = scene.cameras.active.position.clone();
+    mousePointer('pointerdown', client(0, 0));
+    const end = client(10, 6);
+    mousePointer('pointermove', end);
+    frame(); frame(); frame();
+    expect(scene.preview.line.visible).toBe(true);
+    expect(scene.cameras.active.position.distanceTo(camera)).toBeLessThan(1e-9);
+    expect(dispatch.mock.calls).toHaveLength(0);
+    mousePointer('pointerup', end);
+    frame(); frame(); frame();
+    expect(scene.cameras.active.position.distanceTo(camera)).toBeLessThan(1e-9);
+    expect(dispatch.mock.calls.filter(([command]) => command.type === 'update')).toHaveLength(1);
+    expect(store.getSnapshot().elements[0]).toMatchObject({ position: { x: 10, y: 6 } });
+  });
+
+  it('无关指针的松手与取消不会结束当前拖动，只由原指针提交', () => {
+    const { dispatch, store, scene, captured, capture, release } = selectedPit();
+    const before = store.getSnapshot();
+    mousePointer('pointerdown', groundClient(0, 0));
+    mousePointer('pointermove', groundClient(10, 6));
+    mousePointer('pointerup', groundClient(30, 20), 0, 2);
+    mousePointer('pointercancel', groundClient(30, 20), 0, 2);
+    mousePointer('lostpointercapture', groundClient(30, 20), 0, 2);
+    expect(store.getSnapshot()).toEqual(before);
+    expect(dispatch.mock.calls).toHaveLength(0);
+    expect(scene.preview.line.visible).toBe(true);
+    expect(captured.has(1)).toBe(true);
+    expect(release).not.toHaveBeenCalledWith(1);
+    mousePointer('pointermove', groundClient(15, 8));
+    mousePointer('pointerup', groundClient(15, 8));
+    expect(dispatch.mock.calls.filter(([command]) => command.type === 'update')).toHaveLength(1);
+    expect(store.getSnapshot().elements[0]).toMatchObject({ position: { x: 15, y: 8 } });
+    expect(capture).toHaveBeenCalledExactlyOnceWith(1);
+    expect(release.mock.calls.filter(([id]) => id === 1)).toHaveLength(1);
+    expect(captured.size).toBe(0);
+  });
+
+  it.each(['pointercancel', 'lostpointercapture', 'Escape', 'blur'] as const)('%s 取消拖动不提交，随后仍可正常平移相机', cancellation => {
+    const { dispatch, store, scene, captured, capture, release } = selectedPit();
+    const before = store.getSnapshot();
+    mousePointer('pointerdown', groundClient(0, 0));
+    mousePointer('pointermove', groundClient(10, 6));
+    expect(scene.preview.line.visible).toBe(true);
+    expect(capture).toHaveBeenCalledExactlyOnceWith(1);
+    expect(captured.has(1)).toBe(true);
+    if (cancellation === 'pointercancel') mousePointer('pointercancel', groundClient(10, 6));
+    else if (cancellation === 'lostpointercapture') {
+      captured.delete(1); // 浏览器已经释放捕获后通知应用。
+      mousePointer('lostpointercapture', groundClient(10, 6));
+    }
+    else if (cancellation === 'Escape') fireEvent.keyDown(window, { key: 'Escape' });
+    else fireEvent.blur(window);
+    mousePointer('pointerup', groundClient(10, 6));
+    expect(dispatch.mock.calls).toHaveLength(0);
+    expect(store.getSnapshot()).toEqual(before);
+    expect(scene.preview.line.visible).toBe(false);
+    expect(captured.size).toBe(0);
+    if (cancellation === 'lostpointercapture') expect(release).not.toHaveBeenCalled();
+    else expect(release).toHaveBeenCalledExactlyOnceWith(1);
+
+    const camera = scene.cameras.active.position.clone();
+    mousePointer('pointerdown', groundClient(30, 0), 2, 2);
+    mousePointer('pointermove', groundClient(40, 6), 2, 2);
+    mousePointer('pointerup', groundClient(40, 6), 2, 2);
+    expect(scene.cameras.active.position.distanceTo(camera)).toBeGreaterThan(.1);
+    expect(dispatch.mock.calls).toHaveLength(0);
+    expect(store.getSnapshot()).toEqual(before);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactElement } from 'react';
 import { SceneManager } from '../scene/SceneManager';
 import type { DisplayMode, SceneStatus } from '../scene/SceneManager';
@@ -43,6 +43,11 @@ const NODE_PICK_RADIUS = 2;
 const elementLabel = (element: ExcavationElement): string => element.type === 'trench'
   ? (element.points.length === 2 ? TRENCH_LABEL : POLYLINE_LABEL) : PIT_LABELS[element.type];
 
+type DragState = {
+  id: string; index: number; pointerId: number; canvas: HTMLCanvasElement;
+  start: Point2; active: boolean; target: Point2;
+};
+
 export function SceneViewport(): ReactElement {
   const host = useRef<HTMLDivElement>(null);
   const manager = useRef<SceneManager | null>(null);
@@ -76,14 +81,39 @@ export function SceneViewport(): ReactElement {
   const [generation, setGeneration] = useState(0);
   const [status, setStatus] = useState<SceneStatus>({ ready: false, message: '正在初始化场景…' });
   const pointerDown = useRef<Point2 | null>(null);
+  const drag = useRef<DragState | null>(null);
+  const suppressClick = useRef(false);
   const viewBeforeTool = useRef<ViewMode>('free');
   const shortcuts = useRef<{ finish: () => void; cancel: () => void; undo: () => void; redo: () => void }>(
     { finish: () => undefined, cancel: () => undefined, undo: () => undefined, redo: () => undefined });
 
+  /** 先清空所有权再释放捕获，避免 lostpointercapture 重入提交或取消。 */
+  const releaseDrag = useCallback((): DragState | null => {
+    const state = drag.current;
+    drag.current = null;
+    if (state) {
+      if (state.canvas.hasPointerCapture(state.pointerId)) state.canvas.releasePointerCapture(state.pointerId);
+      manager.current?.setPreviewPoints([]);
+      manager.current?.setCameraControlsEnabled(true);
+    }
+    return state;
+  }, []);
+  const cancelDrag = useCallback((): void => {
+    if (releaseDrag()) { pointerDown.current = null; suppressClick.current = true; }
+  }, [releaseDrag]);
+
+  useEffect(() => {
+    window.addEventListener('blur', cancelDrag);
+    return () => window.removeEventListener('blur', cancelDrag);
+  }, [cancelDrag]);
+
   useEffect(() => {
     if (!host.current) return;
     let active = true;
-    const notify = (next: SceneStatus): void => { if (active) setStatus(next); };
+    const notify = (next: SceneStatus): void => {
+      if (!next.ready) cancelDrag();
+      if (active) setStatus(next);
+    };
     try {
       manager.current = new SceneManager(host.current, notify);
       if (store.getSnapshot().elements.length) manager.current.prepareProject(store.getSnapshot()).commit();
@@ -92,8 +122,8 @@ export function SceneViewport(): ReactElement {
       manager.current?.dispose(); manager.current = null;
       notify({ ready: false, message: '无法启动三维场景。请确认浏览器支持 WebGL 2，并检查硬件加速或显卡驱动。' });
     }
-    return () => { active = false; manager.current?.dispose(); manager.current = null; };
-  }, [generation, store]);
+    return () => { active = false; cancelDrag(); manager.current?.dispose(); manager.current = null; };
+  }, [cancelDrag, generation, store]);
 
   // 吸附目标随工程与当前截面更新：中心线骨架为主、贴合线为辅，指针移动时直接复用。
   useEffect(() => {
@@ -112,7 +142,7 @@ export function SceneViewport(): ReactElement {
     setProject(snapshot);
     setDoc({ name: snapshot.name, dirty: store.isDirty(), canUndo: store.canUndo, canRedo: store.canRedo });
   }
-  function markBusy(value: boolean): void { busyRef.current = value; setBusy(value); }
+  function markBusy(value: boolean): void { if (value) cancelDrag(); busyRef.current = value; setBusy(value); }
 
   function dispatch(command: Command, reportError = true): Result<Project> {
     // 保存/打开等待期间禁止并发文档修改，避免把后续编辑误标为已保存。
@@ -125,7 +155,7 @@ export function SceneViewport(): ReactElement {
   const failure = (result: Result<Project>): string => result.ok ? '' : result.issues.map(i => `${i.path}：${i.message}`).join('；');
   const toolActive = draw.kind === 'drawTrench' || draw.kind === 'placePit' || draw.kind === 'measure';
 
-  function changeView(next: ViewMode): void { manager.current?.setView(next); setView(next); setCursor(null); }
+  function changeView(next: ViewMode): void { cancelDrag(); manager.current?.setView(next); setView(next); setCursor(null); }
   function restoreView(): void { if (view !== viewBeforeTool.current) changeView(viewBeforeTool.current); }
 
   /**
@@ -199,10 +229,6 @@ export function SceneViewport(): ReactElement {
     manager.current?.setPreviewPoints([]);
   }
 
-  /** 拖动编辑：记录对象、节点与起始屏幕坐标，超过 3 CSS 像素才真正开始。 */
-  type DragState = { id: string; kind: 'node' | 'pit'; index: number; start: { x: number; y: number }; active: boolean; target: Point2 };
-  const drag = useRef<DragState | null>(null);
-
   /** 光标在地面上的位置（俯视投影 + 相邻基槽中心线吸附）。 */
   function dragPoint(event: { clientX: number; clientY: number }): Point2 | null {
     const instance = manager.current;
@@ -231,11 +257,12 @@ export function SceneViewport(): ReactElement {
   }
   function beginDrag(event: ReactPointerEvent<HTMLDivElement>): void {
     const instance = manager.current;
-    if (!instance || liveState().kind !== 'select') return;
+    if (!instance || instance.cameras.mode !== 'top' || liveState().kind !== 'select' || !status.ready || busyRef.current) return;
     const ground = groundPointFromPointer(event.clientX, event.clientY, instance.cameras.active, instance.domElement.getBoundingClientRect());
     const hit = instance.pickAt(event.clientX, event.clientY);
     const element = project.elements.find(item => item.id === (hit ?? selected));
     if (!element || !ground) return;
+    let index = -1, target: Point2;
     if (element.type === 'trench') {
       let best = -1, bestDistance = Infinity;
       element.points.forEach((point, index) => {
@@ -243,15 +270,22 @@ export function SceneViewport(): ReactElement {
         if (distance <= NODE_PICK_RADIUS && distance < bestDistance) { best = index; bestDistance = distance; }
       });
       if (best < 0) return;
-      drag.current = { id: element.id, kind: 'node', index: best, start: { x: event.clientX, y: event.clientY }, active: false, target: element.points[best]! };
-      return;
+      index = best; target = element.points[best]!;
+    } else {
+      // 基坑必须命中实体；空白处不能借用当前选中对象进入编辑。
+      if (hit !== element.id) return;
+      target = element.position;
     }
-    drag.current = { id: element.id, kind: 'pit', index: -1, start: { x: event.clientX, y: event.clientY }, active: false, target: element.position };
+    drag.current = { id: element.id, index, pointerId: event.pointerId, canvas: instance.domElement,
+      start: { x: event.clientX, y: event.clientY }, active: false, target };
+    // 捕获阶段先暂停相机，防止 canvas 的原生 OrbitControls 提前开始平移。
+    instance.setCameraControlsEnabled(false);
+    instance.domElement.setPointerCapture(event.pointerId);
   }
   function commitDrag(): void {
-    const state = drag.current;
-    drag.current = null;
+    const state = releaseDrag();
     if (!state?.active) return;
+    suppressClick.current = true;
     const element = project.elements.find(item => item.id === state.id);
     if (!element) return;
     const next = element.type === 'trench'
@@ -261,17 +295,26 @@ export function SceneViewport(): ReactElement {
     const result = dispatch({ type: 'update', element: next });
     if (!result.ok) setError(failure(result));
     else setError('');
-    manager.current?.setPreviewPoints([]);
   }
   function onPointerDown(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (event.button !== 0 || event.isPrimary === false || drag.current) return;
+    suppressClick.current = false;
     pointerDown.current = { x: event.clientX, y: event.clientY };
     beginDrag(event);
   }
-  function onPointerUp(): void { commitDrag(); }
+  function onPointerUp(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    if (event.button === 0) commitDrag(); else cancelDrag();
+  }
+  function onPointerCancel(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (drag.current?.pointerId === event.pointerId) cancelDrag();
+  }
   function onPointerMove(event: ReactPointerEvent<HTMLDivElement>): void {
     trackCursor(event);
     const pending = drag.current;
     if (pending) {
+      if (event.pointerId !== pending.pointerId) return;
+      if ((event.buttons & 1) === 0) { cancelDrag(); return; }
       const moved = Math.hypot(event.clientX - pending.start.x, event.clientY - pending.start.y) > DRAG_THRESHOLD;
       const point = dragPoint(event);
       if (point && moved) {
@@ -291,6 +334,8 @@ export function SceneViewport(): ReactElement {
     if (next.kind === 'measure') updateMeasureLabel(measureValue(next.points, point), event);
   }
   function onClick(event: ReactMouseEvent<HTMLDivElement>): void {
+    if (event.button !== 0) return;
+    if (suppressClick.current) { suppressClick.current = false; pointerDown.current = null; return; }
     const down = pointerDown.current; pointerDown.current = null;
     if (down && isDragGesture(down, { x: event.clientX, y: event.clientY })) return;
     const state = liveState();
@@ -342,12 +387,14 @@ export function SceneViewport(): ReactElement {
     restoreView();
   }
   function cancelDrawing(): void {
+    if (drag.current) { cancelDrag(); return; }
     setDraw(drawing.cancel());
     setDrawMessage(''); setSnapHint(''); setMeasureLabel(null);
     manager.current?.setPreviewPoints([]);
     restoreView();
   }
   function changeTool(kind: ToolKind): void {
+    cancelDrag();
     setDraw(drawing.setTool(kind));
     setDrawMessage(''); setError(''); setSnapHint(''); setMeasureLabel(null);
     manager.current?.setPreviewPoints([]);
@@ -376,7 +423,7 @@ export function SceneViewport(): ReactElement {
 
   /** 新会话（新建/打开）后清空草稿、选择、临时测量与视角，再按新工程的设置同步开关。 */
   function resetSessionUi(): void {
-    drag.current = null;
+    cancelDrag();
     setDraw(drawing.cancel()); setDrawMessage(''); setSnapHint(''); setMeasureLabel(null);
     manager.current?.setPreviewPoints([]); manager.current?.setSelected(null);
     setSelected(''); setError('');
@@ -387,7 +434,7 @@ export function SceneViewport(): ReactElement {
   /** 撤销/重做后同步场景与选择：被撤销掉的对象不能继续处于选中状态。 */
   function afterHistory(): void {
     const next = store.getSnapshot();
-    drag.current = null;
+    cancelDrag();
     setDraw(drawing.cancel()); setDrawMessage(''); setSnapHint(''); setMeasureLabel(null);
     manager.current?.setPreviewPoints([]);
     setSelected(previous => previous && next.elements.some(element => element.id === previous) ? previous : '');
@@ -518,6 +565,7 @@ export function SceneViewport(): ReactElement {
     const onKeyDown = (event: KeyboardEvent): void => {
       // 输入法组合状态中的按键一律不触发场景命令。
       if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === 'Escape' && drag.current) { event.preventDefault(); shortcuts.current.cancel(); return; }
       // Ctrl/Cmd+Enter 在任意焦点下都完成整槽：即使焦点还在长度/角度输入框里也能确认。
       if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
@@ -545,6 +593,7 @@ export function SceneViewport(): ReactElement {
   }
   function changeSnap(enabled: boolean): void { if (dispatch({ type: 'snap', enabled }).ok) setSnap(enabled); }
   function reload(): void {
+    cancelDrag();
     setView('free'); setDisplayMode('solid'); setGrid(store.getSnapshot().settings.gridVisible);
     setDraw(drawing.cancel()); setDrawMessage('');
     setStatus({ ready: false, message: '正在初始化场景…' });
@@ -561,6 +610,7 @@ export function SceneViewport(): ReactElement {
     : '未选择对象：请先在画布或“当前对象”中选择要删除的对象';
   function deleteActive(): void {
     if (!active) return;
+    cancelDrag();
     if (dispatch({ type: 'delete', id: active.id }).ok) setSelected('');
   }
   return <>
@@ -573,13 +623,16 @@ export function SceneViewport(): ReactElement {
       deleteReason={deleteReason} onTool={changeTool} onDelete={deleteActive} />
     <section className="scene-panel" aria-label="基础三维场景">
     <div className="scene-heading"><h2>施工场地</h2><span>{VIEW_LABELS[view]} · {project.elements.length} 个开挖对象 · 场地自动扩展</span></div>
-    <div className="viewport" ref={host} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onClick={onClick} onDoubleClick={onDoubleClick}
+    <div className="viewport" ref={host} onPointerDownCapture={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onClick={onClick} onDoubleClick={onDoubleClick}
+      onPointerCancel={onPointerCancel} onLostPointerCapture={onPointerCancel}
       onPointerLeave={() => setCursor(null)}
       style={toolActive ? { cursor: 'crosshair' } : undefined}>
       {measureLabel && <span className="measure-label" style={{ left: measureLabel.x, top: measureLabel.y }}>{measureLabel.text}</span>}
     </div>
     <div className="scene-status" role={status.ready ? 'status' : 'alert'}>{status.message}</div>
-    <div className="scene-help"><span>{view === 'free' ? '左键旋转 · 右键平移 · 滚轮缩放' : '左键或右键平移 · 滚轮缩放 · 正交视图锁定旋转'}<br />网格间距 1m · 坐标轴：X 红 / Y 绿 / Z 蓝</span>
+    <div className="scene-help"><span>{view === 'free' ? '左键旋转 · 右键平移 · 滚轮缩放'
+      : view === 'top' && draw.kind === 'select' ? '左键拖动对象或节点 · 空白处拖动或右键平移 · 滚轮缩放'
+        : '左键或右键平移 · 滚轮缩放 · 正交视图锁定旋转'}<br />网格间距 1m · 坐标轴：X 红 / Y 绿 / Z 蓝</span>
       <button onClick={reload}>重新加载场景</button></div>
     </section>
     <aside className="next-stage" aria-label="绘制与开挖对象属性">
@@ -588,7 +641,7 @@ export function SceneViewport(): ReactElement {
       ortho={ortho} onOrtho={setOrtho} hint={snapHint}
       onSection={setSection} onPit={setPit} onAdvance={advance} onFinish={finishTrench} onCancel={cancelDrawing}
       onResetMeasure={resetMeasure} />
-    <label>当前对象<select aria-label="当前对象" value={selected} onChange={e => { setSelected(e.target.value); setError(''); }}>
+    <label>当前对象<select aria-label="当前对象" value={selected} onChange={e => { cancelDrag(); setSelected(e.target.value); setError(''); }}>
       <option value="">请选择对象</option>{project.elements.map(e => <option key={e.id} value={e.id}>{e.id} · {elementLabel(e)}</option>)}
     </select></label>
     {active && <fieldset disabled={!status.ready}>
@@ -608,7 +661,7 @@ export function SceneViewport(): ReactElement {
     </aside>
     <div className="bottom-bar">
       <ViewControls view={view} grid={grid} snap={snap} ready={status.ready} viewLocked={toolActive}
-        onView={changeView} onGrid={changeGrid} onSnap={changeSnap} onReset={() => manager.current?.resetCamera()}
+        onView={changeView} onGrid={changeGrid} onSnap={changeSnap} onReset={() => { cancelDrag(); manager.current?.resetCamera(); }}
         displayMode={displayMode} hasElements={project.elements.length > 0} onDisplayMode={mode => { manager.current?.setDisplayMode(mode); setDisplayMode(mode); }} />
       <StatusBar tool={draw.kind} ready={status.ready} message={status.message} cursor={cursor}
         grid={grid} snap={snap} elementCount={project.elements.length} dirty={doc.dirty} busy={busy} />

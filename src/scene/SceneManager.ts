@@ -76,6 +76,16 @@ export class SceneManager {
     this.installControls();
   }
 
+  /** 对象拖动与相机操作互斥；恢复时清除暂停前的惯性，保持当前镜头位置。 */
+  setCameraControlsEnabled(enabled: boolean): void {
+    if (this.disposed || !this.controls || this.controls.enabled === enabled) return;
+    if (!enabled) { this.controls.enabled = false; return; }
+    this.cameras.target.copy(this.controls.target);
+    this.controls.dispose();
+    this.controls = null;
+    this.installControls();
+  }
+
   /** 投影与事件绑定必须使用画布自身的 bounding rect。 */
   get domElement(): HTMLCanvasElement { return this.renderer.domElement; }
 
@@ -152,7 +162,8 @@ export class SceneManager {
 
   private readonly render = (): void => {
     if (this.disposed) return;
-    this.controls?.update();
+    // OrbitControls.enabled 只拦输入，update 仍会消耗惯性；编辑期间必须一起暂停。
+    if (this.controls?.enabled) this.controls.update();
     this.renderer.render(this.scene, this.cameras.active);
   };
 
